@@ -4,9 +4,11 @@ use sdl3::{
     event::{ Event, WindowEvent },
     pixels::{ Color, PixelFormat },
     rect::Rect,
-    sys::video::SDL_SetWindowShape,
     video::WindowFlags,
 };
+
+pub mod utils;
+pub mod sprite;
 
 fn main() {
     let sdl = sdl3::init().unwrap();
@@ -33,8 +35,7 @@ fn main() {
             image.width().saturating_div(COLUMN_COUNT),
             image.width().saturating_div(COLUMN_COUNT)
         )
-        .borderless()
-        .set_flags(WindowFlags::TRANSPARENT | WindowFlags::ALWAYS_ON_TOP | WindowFlags::BORDERLESS)
+        .set_flags(WindowFlags::TRANSPARENT | WindowFlags::ALWAYS_ON_TOP)
         .build()
         .unwrap();
     // println!("{:?}", window.window_pixel_format().bytes_per_pixel());
@@ -43,21 +44,19 @@ fn main() {
     let mut canvas = window.into_canvas();
 
     canvas.set_blend_mode(sdl3::render::BlendMode::Blend);
-    let mut texture = canvas
+    let tex_creator = canvas.texture_creator();
+    let mut texture = tex_creator
         .create_texture_static(Some(PixelFormat::RGBA32), image.width(), image.height())
         .unwrap();
-
+    
     let _ = texture.update(None, &bytes, (image.width() * 4) as usize);
 
     canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
     let mut i = 0;
-    unsafe {
-        SDL_SetWindowShape(canvas.window().raw(), std::ptr::null_mut());
-    }
     let mut should_exit = false;
 
     // let event_channel = mpsc::channel();
-    let mut bus = Instant::now();
+    // let bus = Instant::now();
     while !should_exit {
         for event in event_pump.poll_iter() {
             match event {
@@ -85,18 +84,11 @@ fn main() {
             sprite_width,
             sprite_height
         );
-
-        // let mut surface = surface::Surface
-        //     ::new(sprite_width, sprite_height, PixelFormat::RGBA32)
-        //     .unwrap();
-        // surface.with_lock_mut(|buf| {
-        //     buf.fill_with(0);
-        // });
-        if bus.elapsed() > Duration::from_millis(200) {
-            unsafe {
-                SDL_SetWindowShape(canvas.window().raw(), std::ptr::null_mut());
-            }
-        }
+        // if bus.elapsed() > Duration::from_millis(200) {
+        //     unsafe {
+        //         SDL_SetWindowShape(canvas.window().raw(), std::ptr::null_mut());
+        //     }
+        // }
 
         canvas.clear();
         canvas.copy(&texture, rect, None).unwrap();
