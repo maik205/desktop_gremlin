@@ -114,6 +114,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bad-signals"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4f43c1d0dfba7dc4457e26f98d6d35b3b3200c7e3c50772dd829834bab7ae0a"
+
+[[package]]
 name = "bit_field"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -245,10 +251,9 @@ name = "desktop_gremlin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bad-signals",
  "image",
- "png",
  "sdl3",
- "vcpkg",
 ]
 
 [[package]]
@@ -976,12 +981,6 @@ dependencies = [
  "num-traits",
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "vcpkg"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "wasip2"

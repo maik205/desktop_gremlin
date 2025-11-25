@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
+bad-signals = "0.1.0"
 image = "0.25.9"
-png = "0.18.0"
 sdl3 = { version = "0.16.2", features = ["build-from-source"] }
-vcpkg = "0.2.15"

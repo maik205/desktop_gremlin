@@ -1,22 +1,31 @@
 use std::{
     collections::{ HashMap, LinkedList },
+    env,
     fs::{ self, read_dir },
     io,
     path::{ Path, PathBuf },
+    str::FromStr,
+    thread,
+    time::Duration,
 };
 
 use anyhow::Result;
+use bad_signals::signals::{ common::Signalable, signals::Signal };
 use image::{ DynamicImage, EncodableLayout };
+// absolutely goated.
 use sdl3::{
+    // might move to winit & wgpu but,... ehhhhhhhhh too lazy.... i love sdl
+
     Sdl,
-    pixels::PixelFormat,
-    render::{ Canvas, Texture, TextureCreator },
+    event::{ Event },
+    pixels::{ Color, PixelFormat },
+    rect::{ Point, Rect },
+    render::{ Canvas, FRect, Texture, TextureCreator },
     video::{ Window, WindowBuilder, WindowContext, WindowFlags },
 };
+pub const GLOBAL_PIXEL_FORMAT: PixelFormat = PixelFormat::RGB24;
 
-use crate::utils::get_png_list;
-
-const PIXEL_FORMAT: PixelFormat = PixelFormat::ARGB32;
+use crate::{ ui::{ Render, RenderStyle }, utils::{ calculate_pix_from_parent, get_png_list } };
 
 #[derive(Debug, Clone)]
 pub struct SpriteSheet {
@@ -35,7 +44,7 @@ impl SpriteSheet {
     }
 
     pub fn load_to_texture(&self, texture: &mut Texture) -> Result<(), SpriteError> {
-        let bytes = match PIXEL_FORMAT {
+        let bytes = match GLOBAL_PIXEL_FORMAT {
             PixelFormat::RGBA32 => {
                 self.image
                     .as_rgba8()
@@ -45,7 +54,7 @@ impl SpriteSheet {
             }
             PixelFormat::RGB24 => {
                 self.image
-                    .as_rgb8()
+                    .as_rgb8() // (a: &ImageBuffer<RB....>) => { return Ok(a.as_bytes());}
                     .map_or(Err(SpriteError::PixelLoadError), |a| { Ok(a.as_bytes()) })
             }
             _ => {
@@ -57,7 +66,11 @@ impl SpriteSheet {
 
         if let Ok(bytes) = bytes {
             return texture
-                .update(None, bytes, PIXEL_FORMAT.bytes_per_pixel() * (self.image.width() as usize))
+                .update(
+                    None,
+                    bytes,
+                    GLOBAL_PIXEL_FORMAT.bytes_per_pixel() * (self.image.width() as usize)
+                )
                 .map_err(|_| SpriteError::TextureWriteError);
         } else {
             return Err(SpriteError::PixelLoadError);
@@ -108,17 +121,44 @@ pub struct LaunchArguments {
     pub title: String,
     pub window_flags: Vec<WindowFlags>,
 }
+
+impl LaunchArguments {
+    pub fn parse_from_args(args: env::Args) {
+        let mut launch_args = LaunchArguments::default();
+        let args = args.collect::<Vec<String>>();
+        for mut i in 0..args.len() {
+            if args[i].starts_with('-') {
+                match args[i].as_str() {
+                    "-w" => {
+                        launch_args.w = FromStr::from_str(args[i + 1].as_str()).unwrap_or(500);
+                        i += 1;
+                    }
+                    "-h" => {
+                        launch_args.h = FromStr::from_str(args[i + 1].as_str()).unwrap_or(500);
+                        i += 1;
+                    }
+                    "-t" => {
+                        launch_args.title = args[i + 1].clone();
+                        i += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 impl Default for LaunchArguments {
     fn default() -> Self {
         Self {
             w: 500,
             h: 500,
-            title: Default::default(),
+            title: String::from("Desktop Gremlin!"),
             window_flags: vec![
                 WindowFlags::TRANSPARENT,
                 WindowFlags::ALWAYS_ON_TOP,
-                WindowFlags::NOT_FOCUSABLE,
-                WindowFlags::BORDERLESS
+                WindowFlags::NOT_FOCUSABLE
+                // WindowFlags::BORDERLESS
             ],
         }
     }
@@ -132,6 +172,7 @@ impl LaunchArguments {
         acc.as_u32()
     }
 }
+
 impl DesktopGremlin {
     pub fn new(launch_arguments: Option<LaunchArguments>) -> Result<DesktopGremlin> {
         let sdl = sdl3::init()?;
@@ -151,7 +192,70 @@ impl DesktopGremlin {
 
         let texture_creator = canvas.texture_creator();
 
-        Ok(DesktopGremlin { sdl, current_gremlin: None, texture_creator, canvas })
+        Ok(DesktopGremlin {
+            sdl,
+            current_gremlin: None,
+            texture_creator,
+            canvas,
+        })
+    }
+
+    pub fn go(mut self) {
+        let (window_w, window_h) = self.canvas.window().size();
+
+        // UI rendering logic i guess
+        let mut button = Button::default();
+        button.on_click.subscribe(|_| {
+            println!("Button clicked");
+        });
+        let render_rect_size = calculate_pix_from_parent(
+            (window_w, window_h),
+            (button.width, button.height)
+        );
+
+        println!("{:?}", render_rect_size);
+        let render_rect = {
+            Rect::new(
+                0,
+                window_h.saturating_sub(render_rect_size.1) as i32,
+                render_rect_size.0,
+                render_rect_size.1
+            )
+        };
+        button
+            .render_canvas(
+                &mut self.canvas,
+                Some(into_frect(render_rect)),
+                Some(vec![RenderStyle::BackgroundColor(Color::BLACK)])
+            )
+            .unwrap();
+        self.canvas.present();
+        let mut should_exit = false;
+
+        loop {
+            if should_exit {
+                break;
+            }
+            for event in self.sdl.event_pump().unwrap().poll_iter() {
+                match event {
+                    Event::Quit { .. } => {
+                        should_exit = true;
+                    }
+                    Event::MouseButtonDown { mouse_btn, x, y, .. } => {
+                        match mouse_btn {
+                            sdl3::mouse::MouseButton::Left => {
+                                if render_rect.contains_point(Point::new(x as i32, y as i32)) {
+                                    button.on_click.set(());
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // thread::sleep(Duration::from_millis(500));
+        }
     }
 
     fn load_gremlin(&mut self, gremlin_txt_path: String) -> Result<Gremlin, GremlinLoadError> {
@@ -200,6 +304,93 @@ impl DesktopGremlin {
         } else {
             Err(GremlinLoadError::FsError(None))
         }
+    }
+}
+
+// impl Into<Rect> for FRect {
+pub fn into_rect(f_rect: FRect) -> Rect {
+    Rect::new(f_rect.x as i32, f_rect.y as i32, f_rect.w as u32, f_rect.h as u32)
+}
+pub fn into_opt_rect(f_rect: Option<FRect>) -> Option<Rect> {
+    if let Some(f_rect) = f_rect {
+        return Some(Rect::new(f_rect.x as i32, f_rect.y as i32, f_rect.w as u32, f_rect.h as u32));
+    }
+    None
+}
+pub fn into_frect(rect: Rect) -> FRect {
+    FRect { x: rect.x as f32, y: rect.y as f32, w: rect.w as f32, h: rect.h as f32 }
+}
+// }
+
+pub struct Button {
+    color: Color,
+    width: SizeUnit,
+    height: SizeUnit,
+    on_click: Signal<()>,
+}
+
+impl Default for Button {
+    fn default() -> Self {
+        Self {
+            color: Color::BLACK,
+            width: SizeUnit::Percentage(100),
+            height: SizeUnit::Pixel(100),
+            on_click: Signal::new(()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum SizeUnit {
+    Pixel(u32),
+    Percentage(u32),
+}
+
+pub struct Component<T> where T: Render {
+    pub view: T,
+}
+
+impl Render for Button {
+    fn render(
+        &self,
+        texture: &mut Texture,
+        rect: Option<FRect>,
+        styles: Option<Vec<RenderStyle>>
+    ) -> Result<()> {
+        let _ = texture.with_lock(None, |buf, _| {
+            for i in 0..buf.len() {
+                match i % 4 {
+                    0 => {
+                        buf[i] = self.color.r;
+                    }
+                    1 => {
+                        buf[i] = self.color.g;
+                    }
+                    2 => {
+                        buf[i] = self.color.b;
+                    }
+                    3 => {
+                        buf[i] = self.color.a;
+                    }
+                    _ => {}
+                }
+            }
+        });
+        Ok(())
+    }
+
+    fn render_canvas(
+        &self,
+        canvas: &mut Canvas<Window>,
+        rect: Option<FRect>,
+        styles: Option<Vec<RenderStyle>>
+    ) -> Result<()> {
+        let color = canvas.draw_color();
+        canvas.set_draw_color(self.color);
+        canvas.fill_rect(rect).unwrap();
+        canvas.set_draw_color(color);
+
+        Ok(())
     }
 }
 

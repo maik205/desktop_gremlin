@@ -2,6 +2,8 @@ use std::{ collections::HashMap, fs::{ DirEntry, read_dir }, io, path::PathBuf }
 
 use sdl3::rect::Rect;
 
+use crate::sprite::SizeUnit;
+
 pub trait Inflate {
     // Inflate around a center
     fn inflate(&self, x: u32, y: u32) -> Rect;
@@ -43,4 +45,17 @@ pub fn get_png_list(
         }
     }
     Ok(())
+}
+
+pub fn calculate_pix_from_parent(
+    parent_pix: (u32, u32),
+    value: (SizeUnit, SizeUnit)
+) -> (u32, u32) {
+    let calc: fn(u32, SizeUnit) -> u32 = |parent, unit| {
+        match unit {
+            SizeUnit::Pixel(value) => value,
+            SizeUnit::Percentage(percentage) => (percentage * parent) / 100,
+        }
+    };
+    (calc(parent_pix.0, value.0), calc(parent_pix.1, value.1))
 }
