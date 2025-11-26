@@ -223,7 +223,10 @@ impl DesktopGremlin {
                 vec![
                     div().add_child(
                         compose(Div::default().style(RenderStyle::BackgroundColor(Color::RED)))
-                            .set_preferred_size((SizeUnit::Percentage(50), SizeUnit::Percentage(50)))
+                            .set_preferred_size((
+                                SizeUnit::Percentage(50),
+                                SizeUnit::Percentage(50),
+                            ))
                             .add_child(
                                 compose(
                                     Div::default().style(RenderStyle::BackgroundColor(Color::BLUE))
@@ -232,8 +235,11 @@ impl DesktopGremlin {
                     )
                 ]
             );
-        let _ = ui.render_canvas(&mut self.canvas, None);
-
+        let mut texture = self.texture_creator
+            .create_texture_streaming(GLOBAL_PIXEL_FORMAT, 500, 500)
+            .unwrap();
+        let _ = ui.render(&mut texture, None);
+        let _ = self.canvas.copy(&texture, None, None);
         // UI rendering logic i guess
         let mut button = Button::default();
         button.on_click.subscribe(|_| {

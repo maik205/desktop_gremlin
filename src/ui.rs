@@ -8,7 +8,10 @@ use sdl3::{
     video::Window,
 };
 
-use crate::{ sprite::{ SizeUnit, into_frect, into_opt_rect, into_rect }, utils::calculate_pix_from_parent };
+use crate::{
+    sprite::{ SizeUnit, into_frect, into_opt_rect, into_rect },
+    utils::calculate_pix_from_parent,
+};
 
 pub struct Component {
     rendered_by: Box<dyn Composable>,
@@ -99,6 +102,7 @@ impl Render for Div {
                 match style {
                     RenderStyle::BackgroundColor(color) => {
                         background_color = *color;
+                        println!("{:?}", color);
                     }
                 }
             }
@@ -108,6 +112,7 @@ impl Render for Div {
             while i + 3 < buffer.len() {
                 let mut color_components = (buffer[i], buffer[i + 1], buffer[i + 2], buffer[i + 3]);
                 FRAGMENT_SHADER(&mut color_components, background_color);
+                (buffer[i], buffer[i + 1], buffer[i + 2], buffer[i + 3]) = color_components;
                 i += 3;
             }
         })?;
@@ -183,7 +188,7 @@ fn render_tree(
     let render_rect = {
         Rect::new(/*offsets in the future maybe*/ 0, 0, render_rect_size.0, render_rect_size.1)
     };
-    component.rendered_by.as_ref().render(texture, None)?;
+    component.rendered_by.as_ref().render(texture, Some(into_frect(render_rect)))?;
     for child in &component.children {
         render_tree(child, texture, render_rect)?;
     }
@@ -213,14 +218,14 @@ impl Render for UI {
     fn render(
         &self,
         texture: &mut Texture,
-        rect: Option<FRect>
+        parent_rect: Option<FRect>
         // styles: Option<Vec<RenderStyle>>
     ) -> anyhow::Result<()> {
         render_tree(
             &self.root,
             texture,
             into_rect(
-                rect.unwrap_or(
+                parent_rect.unwrap_or(
                     FRect::new(0.0, 0.0, texture.width() as f32, texture.height() as f32)
                 )
             )
