@@ -1,14 +1,20 @@
-use std::{ collections::HashSet, sync::LazyLock };
+use std::{ collections::HashSet };
 
 use bad_signals::signals::signals::Signal;
-use sdl3::{ pixels::Color, rect::Point, render::{ Canvas, FRect, Texture }, video::Window };
+use sdl3::{
+    pixels::Color,
+    rect::{ Point, Rect },
+    render::{ Canvas, FRect, Texture },
+    video::Window,
+};
 
-use crate::sprite::{ GLOBAL_PIXEL_FORMAT, into_opt_rect, into_rect };
+use crate::{ sprite::{ SizeUnit, into_frect, into_opt_rect, into_rect }, utils::calculate_pix_from_parent };
 
 pub struct Component {
     rendered_by: Box<dyn Composable>,
     event_listeners: HashSet<Signal<ComponentEvent>>,
     children: Vec<Component>,
+    preferred_size: (SizeUnit, SizeUnit),
 }
 
 impl Component {
@@ -17,11 +23,23 @@ impl Component {
             rendered_by: renderable,
             event_listeners: Default::default(),
             children: Default::default(),
+            preferred_size: (SizeUnit::Percentage(100), SizeUnit::Percentage(100)),
         }
     }
 
-    pub fn add_child(&mut self, component: Component) {
+    pub fn add_child(mut self, component: Component) -> Self {
         self.children.push(component);
+        self
+    }
+
+    pub fn add_children(mut self, mut components: Vec<Component>) -> Self {
+        self.children.append(&mut components);
+        self
+    }
+
+    pub fn set_preferred_size(mut self, size: (SizeUnit, SizeUnit)) -> Self {
+        self.preferred_size = size;
+        self
     }
 }
 
@@ -30,22 +48,42 @@ pub trait Composable: Render + Notify {}
 pub trait Notify {
     fn notify(&self, event: ComponentEvent);
 }
-pub struct Div;
 
+#[derive(Default, Debug, Clone)]
+pub struct Div {
+    pub styles: Option<Vec<RenderStyle>>,
+}
+impl Div {
+    pub fn style(mut self, style: RenderStyle) -> Self {
+        if let Some(ref mut styles) = self.styles {
+            styles.push(style);
+        } else {
+            self.styles = Some(vec![style]);
+        }
+
+        self
+    }
+}
+#[derive(Debug, Clone, Copy)]
 pub enum RenderStyle {
     BackgroundColor(Color),
+}
+
+pub fn compose<T: Composable + 'static>(from: T) -> Component {
+    // move composable component into this scope
+    let composition = from;
+    Component::new(Box::new(composition))
 }
 
 impl Render for Div {
     fn render(
         &self,
         texture: &mut sdl3::render::Texture,
-        rect: Option<sdl3::render::FRect>,
-        styles: Option<Vec<RenderStyle>>
+        rect: Option<sdl3::render::FRect>
+        // styles: Option<Vec<RenderStyle>>
     ) -> anyhow::Result<()> {
         // todo!()
         //no auto layouts for now ...
-        // if let Some(rect) = rect {
 
         // rgba
         // static DEFAULT_COLOR: LazyLock<Color> = LazyLock::new(|| Color::BLACK);
@@ -56,11 +94,11 @@ impl Render for Div {
             components.2 = color.b;
             components.3 = color.a;
         };
-        if let Some(styles) = styles {
+        if let Some(styles) = &self.styles {
             for style in styles {
                 match style {
                     RenderStyle::BackgroundColor(color) => {
-                        background_color = color;
+                        background_color = *color;
                     }
                 }
             }
@@ -80,17 +118,17 @@ impl Render for Div {
     fn render_canvas(
         &self,
         canvas: &mut sdl3::render::Canvas<sdl3::video::Window>,
-        rect: Option<sdl3::render::FRect>,
-        styles: Option<Vec<RenderStyle>>
+        rect: Option<sdl3::render::FRect>
+        // styles: Option<Vec<RenderStyle>>
     ) -> anyhow::Result<()> {
         // todo!()
         let draw_color = canvas.draw_color();
         let mut target_draw_color = Color::BLACK;
-        if let Some(styles) = styles {
+        if let Some(styles) = &self.styles {
             for style in styles {
                 match style {
                     RenderStyle::BackgroundColor(color) => {
-                        target_draw_color = color;
+                        target_draw_color = *color;
                     }
                 }
             }
@@ -104,20 +142,89 @@ impl Render for Div {
 }
 
 pub struct UI {
-    root: Option<Component>,
+    pub root: Component,
 }
-// should this be rendering backend agnostic?
 
+pub fn div() -> Component {
+    let div = Div::new();
+    Component::new(div)
+}
+
+// should this be rendering backend agnostic?
+impl Composable for Div {}
+impl Div {
+    pub fn new() -> Box<Self> {
+        Box::new(Default::default())
+    }
+}
+impl Notify for Div {
+    fn notify(&self, _: ComponentEvent) {}
+}
 // pub type Renderer = impl FnMut(&mut [u8], u8) -> anyhow::Result<()>;
+impl Default for UI {
+    fn default() -> Self {
+        let component = Component::new(Div::new());
+
+        Self { root: component }
+    }
+}
+
+fn render_tree(
+    component: &Component,
+    texture: &mut Texture,
+    parent_rect: Rect
+) -> anyhow::Result<()> {
+    let render_rect_size = calculate_pix_from_parent(
+        (parent_rect.w as u32, parent_rect.h as u32),
+        (component.preferred_size.0, component.preferred_size.1)
+    );
+
+    println!("{:?}", render_rect_size);
+    let render_rect = {
+        Rect::new(/*offsets in the future maybe*/ 0, 0, render_rect_size.0, render_rect_size.1)
+    };
+    component.rendered_by.as_ref().render(texture, None)?;
+    for child in &component.children {
+        render_tree(child, texture, render_rect)?;
+    }
+    Ok(())
+}
+
+fn render_tree_canvas(
+    component: &Component,
+    canvas: &mut Canvas<Window>,
+    parent_rect: Rect
+) -> anyhow::Result<()> {
+    let render_rect_size = calculate_pix_from_parent(
+        (parent_rect.w as u32, parent_rect.h as u32),
+        (component.preferred_size.0, component.preferred_size.1)
+    );
+
+    println!("{:?}", render_rect_size);
+    let render_rect = { Rect::new(0, 0, render_rect_size.0, render_rect_size.1) };
+    component.rendered_by.as_ref().render_canvas(canvas, Some(into_frect(render_rect)))?;
+    for child in &component.children {
+        render_tree_canvas(child, canvas, render_rect)?;
+    }
+    Ok(())
+}
 
 impl Render for UI {
     fn render(
         &self,
         texture: &mut Texture,
-        rect: Option<FRect>,
-        styles: Option<Vec<RenderStyle>>
+        rect: Option<FRect>
+        // styles: Option<Vec<RenderStyle>>
     ) -> anyhow::Result<()> {
-        // todo!()
+        render_tree(
+            &self.root,
+            texture,
+            into_rect(
+                rect.unwrap_or(
+                    FRect::new(0.0, 0.0, texture.width() as f32, texture.height() as f32)
+                )
+            )
+        )?;
 
         Ok(())
     }
@@ -125,17 +232,22 @@ impl Render for UI {
     fn render_canvas(
         &self,
         canvas: &mut Canvas<Window>,
-        rect: Option<FRect>,
-        styles: Option<Vec<RenderStyle>>
+        rect: Option<FRect>
+        // styles: Option<Vec<RenderStyle>>
     ) -> anyhow::Result<()> {
-        // todo!()
-        let size = canvas.window().size();
-        self.render(
-            &mut canvas
-                .texture_creator()
-                .create_texture_streaming(GLOBAL_PIXEL_FORMAT, size.0, size.1)?,
-            rect,
-            styles
+        render_tree_canvas(
+            &self.root,
+            canvas,
+            into_rect(
+                rect.unwrap_or(
+                    FRect::new(
+                        0.0,
+                        0.0,
+                        canvas.window().size().0 as f32,
+                        canvas.window().size().1 as f32
+                    )
+                )
+            )
         )?;
         Ok(())
     }
@@ -164,8 +276,8 @@ pub trait Render {
     fn render(
         &self,
         texture: &mut Texture,
-        rect: Option<FRect>,
-        styles: Option<Vec<RenderStyle>>
+        rect: Option<FRect>
+        // styles: Option<Vec<RenderStyle>>
     ) -> anyhow::Result<()>;
 
     /// render_canvas() utilizes SDL's Render API, abstracting away platform specific
@@ -173,8 +285,7 @@ pub trait Render {
     fn render_canvas(
         &self,
         canvas: &mut Canvas<Window>,
-        rect: Option<FRect>,
-        styles: Option<Vec<RenderStyle>>
+        rect: Option<FRect>
+        // styles: Option<Vec<RenderStyle>>s
     ) -> anyhow::Result<()>;
-    // where T: Into<Option<FRect>>;
 }

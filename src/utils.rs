@@ -1,4 +1,4 @@
-use std::{ collections::HashMap, fs::{ DirEntry, read_dir }, io, path::PathBuf };
+use std::{ collections::HashMap, fs::{ read_dir }, io, path::PathBuf };
 
 use sdl3::rect::Rect;
 

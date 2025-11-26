@@ -25,7 +25,10 @@ use sdl3::{
 };
 pub const GLOBAL_PIXEL_FORMAT: PixelFormat = PixelFormat::RGB24;
 
-use crate::{ ui::{ Render, RenderStyle }, utils::{ calculate_pix_from_parent, get_png_list } };
+use crate::{
+    ui::{ Component, Div, Render, RenderStyle, UI, compose, div },
+    utils::{ calculate_pix_from_parent, get_png_list },
+};
 
 #[derive(Debug, Clone)]
 pub struct SpriteSheet {
@@ -200,35 +203,63 @@ impl DesktopGremlin {
         })
     }
 
+    // spins up teh event lop
     pub fn go(mut self) {
         let (window_w, window_h) = self.canvas.window().size();
+
+        let mut ui = UI::default();
+
+        let mut child_div = Div::new();
+
+        child_div.styles = vec![RenderStyle::BackgroundColor(Color::RED)].into();
+
+        let component = Component::new(child_div);
+
+        component.set_preferred_size((SizeUnit::Percentage(50), SizeUnit::Percentage(50)));
+        // component tree woks!1!
+        ui.root = ui.root
+            .set_preferred_size((SizeUnit::Percentage(100), SizeUnit::Percentage(100)))
+            .add_children(
+                vec![
+                    div().add_child(
+                        compose(Div::default().style(RenderStyle::BackgroundColor(Color::RED)))
+                            .set_preferred_size((SizeUnit::Percentage(50), SizeUnit::Percentage(50)))
+                            .add_child(
+                                compose(
+                                    Div::default().style(RenderStyle::BackgroundColor(Color::BLUE))
+                                ).set_preferred_size(SizeUnit::percentage(50, 50))
+                            )
+                    )
+                ]
+            );
+        let _ = ui.render_canvas(&mut self.canvas, None);
 
         // UI rendering logic i guess
         let mut button = Button::default();
         button.on_click.subscribe(|_| {
             println!("Button clicked");
         });
-        let render_rect_size = calculate_pix_from_parent(
-            (window_w, window_h),
-            (button.width, button.height)
-        );
+        // let render_rect_size = calculate_pix_from_parent(
+        //     (window_w, window_h),
+        //     (button.width, button.height)
+        // );
 
-        println!("{:?}", render_rect_size);
-        let render_rect = {
-            Rect::new(
-                0,
-                window_h.saturating_sub(render_rect_size.1) as i32,
-                render_rect_size.0,
-                render_rect_size.1
-            )
-        };
-        button
-            .render_canvas(
-                &mut self.canvas,
-                Some(into_frect(render_rect)),
-                Some(vec![RenderStyle::BackgroundColor(Color::BLACK)])
-            )
-            .unwrap();
+        // println!("{:?}", render_rect_size);
+        // let render_rect = {
+        //     Rect::new(
+        //         0,
+        //         window_h.saturating_sub(render_rect_size.1) as i32,
+        //         render_rect_size.0,
+        //         render_rect_size.1
+        //     )
+        // };
+        // button
+        //     .render_canvas(
+        //         &mut self.canvas,
+        //         Some(into_frect(render_rect))
+        //         // Some(vec![RenderStyle::BackgroundColor(Color::BLACK)])
+        //     )
+        //     .unwrap();
         self.canvas.present();
         let mut should_exit = false;
 
@@ -244,9 +275,9 @@ impl DesktopGremlin {
                     Event::MouseButtonDown { mouse_btn, x, y, .. } => {
                         match mouse_btn {
                             sdl3::mouse::MouseButton::Left => {
-                                if render_rect.contains_point(Point::new(x as i32, y as i32)) {
-                                    button.on_click.set(());
-                                }
+                                // if render_rect.contains_point(Point::new(x as i32, y as i32)) {
+                                //     button.on_click.set(());
+                                // }
                             }
                             _ => (),
                         }
@@ -266,7 +297,7 @@ impl DesktopGremlin {
             if line.starts_with("//") {
                 continue;
             }
-            let split = line.split("=").collect::<Vec<&str>>();
+            let split = line.split('=').collect::<Vec<&str>>();
             if split.len() == 2 {
                 if split[0].starts_with('.') {
                     match split[0] {
@@ -346,18 +377,23 @@ pub enum SizeUnit {
     Percentage(u32),
 }
 
-pub struct Component<T> where T: Render {
-    pub view: T,
+impl SizeUnit {
+    pub fn pix(w: u32, h: u32) -> (SizeUnit, SizeUnit) {
+        (SizeUnit::Pixel(w), SizeUnit::Pixel(h))
+    }
+    pub fn percentage(w: u32, h: u32) -> (SizeUnit, SizeUnit) {
+        (SizeUnit::Percentage(w), SizeUnit::Percentage(h))
+    }
 }
 
 impl Render for Button {
     fn render(
         &self,
         texture: &mut Texture,
-        rect: Option<FRect>,
-        styles: Option<Vec<RenderStyle>>
+        rect: Option<FRect>
+        // styles: Option<Vec<RenderStyle>>
     ) -> Result<()> {
-        let _ = texture.with_lock(None, |buf, _| {
+        let _ = texture.with_lock(into_opt_rect(rect), |buf, _| {
             for i in 0..buf.len() {
                 match i % 4 {
                     0 => {
@@ -382,8 +418,8 @@ impl Render for Button {
     fn render_canvas(
         &self,
         canvas: &mut Canvas<Window>,
-        rect: Option<FRect>,
-        styles: Option<Vec<RenderStyle>>
+        rect: Option<FRect>
+        // styles: Option<Vec<RenderStyle>>
     ) -> Result<()> {
         let color = canvas.draw_color();
         canvas.set_draw_color(self.color);
