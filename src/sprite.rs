@@ -148,6 +148,7 @@ impl TryInto<Animation> for &AnimationProperties {
             return std::result::Result::Ok(Animation {
                 sprite_sheet,
                 current_frame: 0,
+                properties: self.clone(),
             });
         }
         Err(GremlinLoadError::FsError(None))
@@ -206,8 +207,8 @@ impl LaunchArguments {
 impl Default for LaunchArguments {
     fn default() -> Self {
         Self {
-            w: 500,
-            h: 500,
+            w: 320,
+            h: 320,
             title: String::from("Desktop Gremlin!"),
             window_flags: vec![
                 WindowFlags::TRANSPARENT,
@@ -302,9 +303,8 @@ impl DesktopGremlin {
             );
         // 30/11-04/12 i was ded
 
-        // let _ = ui.render_canvas(&mut self.canvas, None);
+        let _ = ui.render_canvas(&mut self.canvas, None);
 
-        // let _ = self.canvas.copy(&texture, None, None);
         // UI rendering logic i guess
         let mut button = Button::default();
         button.on_click.subscribe(|_| {
@@ -337,11 +337,16 @@ impl DesktopGremlin {
             mpsc::Sender<GremlinTask>,
             mpsc::Receiver<GremlinTask>,
         ) = mpsc::channel();
+        let task_tx_2 = task_tx.clone();
         let should_exit_tasketeer = Arc::clone(&should_exit);
         let gremlin_tasketeer = thread::spawn(move || {
             let should_exit = should_exit_tasketeer;
             let task_tx = task_tx;
-            let _ = task_tx.send(GremlinTask::Intro);
+            let _ = task_tx.send(GremlinTask::Play("INTRO".to_string()));
+
+            // will write the AI™™™™ here soon™™™™
+            task_tx.send(GremlinTask::Play("IDLE".to_string()));
+
             while *should_exit.lock().unwrap() == false {
                 thread::sleep(Duration::from_millis(1000));
             }
@@ -353,6 +358,7 @@ impl DesktopGremlin {
                 r"C:\Users\ASUS\Documents\Projects\desktop_gremlin\assets\Gremlins\Mambo\config.txt".to_string()
             )
             .ok();
+        let mut should_check_for_action = true;
 
         loop {
             if *should_exit.lock().unwrap() {
@@ -384,12 +390,18 @@ impl DesktopGremlin {
                 self.canvas.present();
             }
             // check for tasks
-            if let Ok(task) = task_rx.try_recv() && let Some(gremlin) = &mut self.current_gremlin {
+            if
+                should_check_for_action &&
+                let Ok(task) = task_rx.try_recv() &&
+                let Some(gremlin) = &mut self.current_gremlin
+            {
                 // update the texture according to the task
                 match task {
-                    GremlinTask::Intro => {
+                    GremlinTask::Play(animation_name) => {
                         if
-                            let Some(animation_props) = gremlin.animation_map.get("INTRO") &&
+                            let Some(animation_props) = gremlin.animation_map.get(
+                                animation_name.as_str()
+                            ) &&
                             let Ok(animation) =
                                 <&AnimationProperties as TryInto<Animation>>::try_into(
                                     animation_props
@@ -399,11 +411,11 @@ impl DesktopGremlin {
                                 animation.sprite_sheet.into_texture(&self.texture_creator).unwrap()
                             );
                             gremlin.current_animation = Some(animation);
+                            should_check_for_action = false;
                         }
                     }
                     GremlinTask::Goto(_, _) => todo!(),
                 }
-                // reset the animation stats & recreate the texture
             }
 
             // draws the next frame and update frame counter
@@ -412,12 +424,15 @@ impl DesktopGremlin {
                 let Some(gremlin_texture) = &gremlin_texture &&
                 let Some(animation) = &mut gremlin.current_animation
             {
-                animation.current_frame =
-                    (animation.current_frame + 1) % animation.sprite_sheet.frame_count;
                 self.canvas.clear();
                 self.canvas.copy(gremlin_texture, animation.get_frame_rect(), None).unwrap();
                 self.canvas.present();
-                thread::sleep(Duration::from_millis(100));
+                if animation.current_frame + 1 == animation.sprite_sheet.frame_count {
+                    should_check_for_action = true;
+                }
+                animation.current_frame =
+                    (animation.current_frame + 1) % animation.sprite_sheet.frame_count;
+                thread::sleep(Duration::from_secs_f32(1.0 / 30.0));
             }
         }
     }
@@ -456,7 +471,7 @@ impl DesktopGremlin {
         }
         if let Some(parent) = path.parent() && let Some(parent_path_str) = parent.to_str() {
             let mut png_list = HashMap::new();
-            // will error out if i can't get into da directoreas
+            // will error out if i can't get into da directories
             get_png_list(parent_path_str, 5, &mut png_list)?;
 
             // lets consume the map so we don't allocate more memory!
@@ -473,7 +488,7 @@ impl DesktopGremlin {
 }
 
 enum GremlinTask {
-    Intro,
+    Play(String),
     Goto(u32, u32),
 }
 
@@ -583,6 +598,7 @@ impl From<std::io::Error> for GremlinLoadError {
 pub struct Animation {
     sprite_sheet: SpriteSheet,
     pub current_frame: u16,
+    properties: AnimationProperties,
 }
 
 #[derive(Clone, Copy, Debug, Hash)]
