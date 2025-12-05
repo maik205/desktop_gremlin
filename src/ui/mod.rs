@@ -7,6 +7,7 @@ use sdl3::{
     render::{ Canvas, FRect, Texture },
     video::Window,
 };
+pub mod widgets;
 
 use crate::{
     sprite::{ SizeUnit, into_frect, into_opt_rect, into_rect },
@@ -15,6 +16,7 @@ use crate::{
 
 pub struct Component {
     rendered_by: Box<dyn Composable>,
+    location: Rect,
     event_listeners: HashSet<Signal<ComponentEvent>>,
     children: Vec<Component>,
     preferred_size: (SizeUnit, SizeUnit),
@@ -24,6 +26,7 @@ impl Component {
     pub fn new(renderable: Box<dyn Composable>) -> Self {
         Component {
             rendered_by: renderable,
+            location: Rect::new(0, 0, 0, 0),
             event_listeners: Default::default(),
             children: Default::default(),
             preferred_size: (SizeUnit::Percentage(100), SizeUnit::Percentage(100)),
@@ -55,7 +58,9 @@ pub trait Notify {
 #[derive(Default, Debug, Clone)]
 pub struct Div {
     pub styles: Option<Vec<RenderStyle>>,
+    pub text: String,
 }
+
 impl Div {
     pub fn style(mut self, style: RenderStyle) -> Self {
         if let Some(ref mut styles) = self.styles {
@@ -67,15 +72,38 @@ impl Div {
         self
     }
 }
+
 #[derive(Debug, Clone, Copy)]
 pub enum RenderStyle {
     BackgroundColor(Color),
+    Position(Position),
 }
 
 pub fn compose<T: Composable + 'static>(from: T) -> Component {
     // move composable component into this scope
     let composition = from;
     Component::new(Box::new(composition))
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Position {
+    // u32 offsets
+    Relative(SizeUnit, SizeUnit),
+    Fixed(SizeUnit, SizeUnit),
+}
+
+pub fn p_fixed(ml: u32, mr: u32, unit: SizeUnit) -> Position {
+    let sz = match unit {
+        SizeUnit::Pixel(_) => (SizeUnit::Pixel(ml), SizeUnit::Pixel(mr)),
+        SizeUnit::Percentage(_) => (SizeUnit::Percentage(ml), SizeUnit::Percentage(mr)),
+    };
+    Position::Fixed(sz.0, sz.1)
+}
+
+impl Default for Position {
+    fn default() -> Self {
+        Position::Relative(SizeUnit::Pixel(0), SizeUnit::Pixel(0))
+    }
 }
 
 impl Render for Div {
@@ -97,6 +125,16 @@ impl Render for Div {
             components.2 = color.b;
             components.3 = color.a;
         };
+
+        let window_rect = FRect::new(0.0, 0.0, texture.width() as f32, texture.height() as f32);
+
+        let mut rendering_rect = if let Some(rect) = rect {
+            rect
+        } else {
+            // FRect::new(0.0, 0.0, texture.width() as f32, texture.height() as f32)
+            window_rect
+        };
+
         if let Some(styles) = &self.styles {
             for style in styles {
                 match style {
@@ -104,10 +142,36 @@ impl Render for Div {
                         background_color = *color;
                         println!("{:?}", color);
                     }
+                    RenderStyle::Position(position) => {
+                        match position {
+                            Position::Relative(size_unit, size_unit1) => {
+                                rendering_rect.x += calculate_pix_from_parent(
+                                    (texture.width(), texture.height()),
+                                    (*size_unit, SizeUnit::Pixel(0))
+                                ).0 as f32;
+                                rendering_rect.y += calculate_pix_from_parent(
+                                    (texture.width(), texture.height()),
+                                    (SizeUnit::Pixel(0), *size_unit1)
+                                ).1 as f32;
+                            }
+                            Position::Fixed(size_unit, size_unit1) => {
+                                rendering_rect.x = calculate_pix_from_parent(
+                                    (texture.width(), texture.height()),
+                                    (*size_unit, SizeUnit::Pixel(0))
+                                ).0 as f32;
+                                rendering_rect.y = calculate_pix_from_parent(
+                                    (texture.width(), texture.height()),
+                                    (SizeUnit::Pixel(0), *size_unit1)
+                                ).1 as f32;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
-        texture.with_lock(into_opt_rect(rect), move |buffer, _stride| {
+
+        texture.with_lock(into_rect(rendering_rect), move |buffer, _stride| {
             let mut i = 0;
             while i + 3 < buffer.len() {
                 let mut color_components = (buffer[i], buffer[i + 1], buffer[i + 2], buffer[i + 3]);
@@ -135,6 +199,7 @@ impl Render for Div {
                     RenderStyle::BackgroundColor(color) => {
                         target_draw_color = *color;
                     }
+                    _ => {}
                 }
             }
         }
@@ -208,9 +273,11 @@ fn render_tree_canvas(
     println!("{:?}", render_rect_size);
     let render_rect = { Rect::new(0, 0, render_rect_size.0, render_rect_size.1) };
     component.rendered_by.as_ref().render_canvas(canvas, Some(into_frect(render_rect)))?;
+
     for child in &component.children {
         render_tree_canvas(child, canvas, render_rect)?;
     }
+
     Ok(())
 }
 
@@ -257,6 +324,46 @@ impl Render for UI {
         Ok(())
     }
 }
+
+struct Button {
+    div: Div,
+}
+
+impl Render for Button {
+    fn render(
+        &self,
+        texture: &mut Texture,
+        rect: Option<FRect>
+        // styles: Option<Vec<RenderStyle>>
+    ) -> anyhow::Result<()> {
+        self.div.render(texture, rect)?;
+        Ok(())
+    }
+
+    fn render_canvas(
+        &self,
+        canvas: &mut Canvas<Window>,
+        rect: Option<FRect>
+        // styles: Option<Vec<RenderStyle>>s
+    ) -> anyhow::Result<()> {
+        self.div.render_canvas(canvas, rect)?;
+        Ok(())
+    }
+}
+
+impl Notify for Button {
+    fn notify(&self, event: ComponentEvent) {
+        match event {
+            ComponentEvent::OnMouseDown { global_pointer_location } => {
+                println!("{:?}", global_pointer_location);
+            }
+            _ => {}
+        }
+        self.div.notify(event);
+    }
+}
+
+impl Composable for Button {}
 
 // impl UI {
 //     // pub fn render

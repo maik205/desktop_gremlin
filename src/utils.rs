@@ -1,8 +1,9 @@
 use std::{ collections::HashMap, fs::{ read_dir }, io, path::PathBuf };
 
-use sdl3::rect::Rect;
+use image::{ DynamicImage, EncodableLayout };
+use sdl3::{ pixels::PixelFormat, rect::Rect };
 
-use crate::sprite::SizeUnit;
+use crate::sprite::{ GLOBAL_PIXEL_FORMAT, SizeUnit, SpriteError };
 
 pub trait Inflate {
     // Inflate around a center
@@ -38,7 +39,10 @@ pub fn get_png_list(
                         let Some(file_name) = entry.file_name().to_str() &&
                         file_name.ends_with(".png")
                     {
-                        png_list.insert(file_name.to_lowercase(), entry.path());
+                        png_list.insert(
+                            file_name.to_uppercase().strip_suffix(".PNG").unwrap().to_string(),
+                            entry.path()
+                        );
                     }
                 }
             }
@@ -58,4 +62,42 @@ pub fn calculate_pix_from_parent(
         }
     };
     (calc(parent_pix.0, value.0), calc(parent_pix.1, value.1))
+}
+
+pub fn img_get_bytes_global(image: &DynamicImage) -> Result<Vec<u8>, SpriteError> {
+    match GLOBAL_PIXEL_FORMAT {
+        PixelFormat::RGBA32 => {
+            Ok(image.as_rgba8().unwrap().as_bytes().to_vec())
+            // .map_or(Err(SpriteError::PixelLoadError), |img_buffer| {
+            //     Ok(img_buffer.as_bytes().to_vec())
+            // })
+        }
+        PixelFormat::RGB24 => {
+            image
+                .as_rgb8() // (a: &ImageBuffer<RB....>) => { return Ok(a.as_bytes());}
+                .map_or(Err(SpriteError::PixelLoadError), |a| { Ok(a.as_bytes().to_vec()) })
+        }
+        _ => {
+            image
+                .as_rgba8()
+                .map_or(Err(SpriteError::PixelLoadError), |a| { Ok(a.as_bytes().to_vec()) })
+        }
+    }
+}
+
+pub fn get_writer<T: Fn(&mut (u8, u8, u8, u8))>(a: T) -> impl Fn(&mut [u8], usize) {
+    move |buffer: &mut [u8], b: usize| {
+        let mut i = 0;
+        while i + 3 < buffer.len() {
+            let mut color_components: (u8, u8, u8, u8) = (
+                buffer[i],
+                buffer[i + 1],
+                buffer[i + 2],
+                buffer[i + 3],
+            );
+            a(&mut color_components);
+            (buffer[i], buffer[i + 1], buffer[i + 2], buffer[i + 3]) = color_components;
+            i += 3;
+        }
+    }
 }
