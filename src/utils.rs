@@ -1,26 +1,17 @@
 use std::{ collections::HashMap, fs::{ read_dir }, io, path::PathBuf };
 
 use image::{ DynamicImage, EncodableLayout };
-use sdl3::{ pixels::PixelFormat, rect::Rect };
+use sdl3::{ pixels::PixelFormat, rect::{ Point, Rect } };
 
 use crate::sprite::{ GLOBAL_PIXEL_FORMAT, SizeUnit, SpriteError };
 
-pub trait Inflate {
-    // Inflate around a center
-    fn inflate(&self, x: u32, y: u32) -> Rect;
-}
-
-pub type Point = (i32, i32);
-
-impl Inflate for Point {
-    fn inflate(&self, x: u32, y: u32) -> Rect {
-        Rect::new(
-            (x as i32).saturating_sub((x as i32).saturating_div(2)),
-            (y as i32).saturating_sub((y as i32).saturating_div(2)),
-            x,
-            y
-        )
-    }
+pub fn inflate(point: Point, x: u32, y: u32) -> Rect {
+    Rect::new(
+        (x as i32).saturating_sub((x as i32).saturating_div(2)),
+        (y as i32).saturating_sub((y as i32).saturating_div(2)),
+        x,
+        y
+    )
 }
 pub fn get_png_list(
     dir: &str,

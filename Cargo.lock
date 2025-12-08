@@ -284,6 +284,7 @@ dependencies = [
  "fontdue",
  "harfrust",
  "image",
+ "rand",
  "sdl3",
 ]
 
