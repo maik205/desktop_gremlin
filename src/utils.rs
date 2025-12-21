@@ -2,17 +2,15 @@ use std::{collections::HashMap, fs::read_dir, io, path::PathBuf};
 
 use image::{DynamicImage, EncodableLayout};
 use sdl3::{
-    pixels::PixelFormat,
-    rect::{Point, Rect},
-    sys::mouse::SDL_GetGlobalMouseState,
+    EventPump, pixels::PixelFormat, rect::{Point, Rect}, sys::mouse::SDL_GetGlobalMouseState
 };
 
 use crate::sprite::{GLOBAL_PIXEL_FORMAT, SizeUnit, SpriteError};
 
 pub fn inflate(point: Point, x: u32, y: u32) -> Rect {
     Rect::new(
-        (x as i32).saturating_sub((x as i32).saturating_div(2)),
-        (y as i32).saturating_sub((y as i32).saturating_div(2)),
+        (point.x as i32).saturating_sub(x.saturating_div(2) as i32),
+        (point.y as i32).saturating_sub(y.saturating_div(2) as i32),
         x,
         y,
     )
@@ -98,7 +96,7 @@ pub fn get_writer<T: Fn(&mut (u8, u8, u8, u8))>(a: T) -> impl Fn(&mut [u8], usiz
     }
 }
 
-pub fn get_cursor_position() -> (f32, f32) {
+pub fn get_cursor_position(event_pump: &EventPump) -> (f32, f32) {
     unsafe {
         let (mut x, mut y): (f32, f32) = (0.0, 0.0);
         let (x_ptr, y_ptr): (*mut f32, *mut f32) = (&mut x, &mut y);

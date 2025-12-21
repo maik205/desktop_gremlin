@@ -1,4 +1,5 @@
 use std::{
+    cell::{ Ref, RefCell },
     collections::{ HashMap, LinkedList, VecDeque },
     env,
     ffi::{ c_str, c_void },
@@ -11,7 +12,7 @@ use std::{
     str::FromStr,
     sync::{ Arc, Mutex, mpsc::{ self, Sender } },
     thread,
-    time::Duration,
+    time::{ Duration, Instant },
 };
 
 use anyhow::{ Result };
@@ -44,21 +45,12 @@ use sdl3::{
 use windows::Win32::{
     Foundation::{ COLORREF, HWND },
     UI::WindowsAndMessaging::{
-        CreateWindowExW,
         GWL_EXSTYLE,
-        GWL_STYLE,
-        GetWindowLongA,
         GetWindowLongW,
         LWA_COLORKEY,
         SetLayeredWindowAttributes,
-        SetWindowLongA,
         SetWindowLongW,
-        WS_BORDER,
-        WS_EX_COMPOSITED,
         WS_EX_LAYERED,
-        WS_EX_TOPMOST,
-        WS_EX_TRANSPARENT,
-        WS_VISIBLE,
     },
 };
 pub const GLOBAL_PIXEL_FORMAT: PixelFormat = PixelFormat::RGBA32;
@@ -208,7 +200,7 @@ pub struct Gremlin {
     // map between animation name and directory
     animation_map: HashMap<String, AnimationProperties>,
     metadata: HashMap<String, String>,
-    current_animation: Option<Animation>,
+    animator: Option<Animator>,
 }
 
 pub struct DesktopGremlin {
@@ -240,11 +232,11 @@ impl LaunchArguments {
             if args[i].starts_with('-') {
                 match args[i].as_str() {
                     "-w" => {
-                        launch_args.w = FromStr::from_str(args[i + 1].as_str()).unwrap_or(500);
+                        launch_args.w = FromStr::from_str(args[i + 1].as_str()).unwrap_or(200);
                         i += 1;
                     }
                     "-h" => {
-                        launch_args.h = FromStr::from_str(args[i + 1].as_str()).unwrap_or(500);
+                        launch_args.h = FromStr::from_str(args[i + 1].as_str()).unwrap_or(200);
                         i += 1;
                     }
                     "-t" => {
@@ -261,8 +253,8 @@ impl LaunchArguments {
 impl Default for LaunchArguments {
     fn default() -> Self {
         Self {
-            w: 320,
-            h: 320,
+            w: 200,
+            h: 200,
             title: String::from("Desktop Gremlin!"),
             window_flags: vec![
                 WindowFlags::TRANSPARENT,
@@ -290,7 +282,7 @@ unsafe extern "C" fn all_drag(
     _: *const SDL_Point,
     _: *mut c_void
 ) -> SDL_HitTestResult {
-    SDL_HitTestResult::DRAGGABLE
+    SDL_HitTestResult::NORMAL
 }
 
 impl DesktopGremlin {
@@ -349,7 +341,7 @@ impl DesktopGremlin {
     // spins up teh event lop
     pub fn go(mut self) {
         let should_exit = Arc::new(Mutex::new(false));
-        let mut gremlin_texture: Option<Texture<'_>> = None;
+        let mut gremlin_texture: Option<Rc<Texture<'_>>> = None;
         let (task_tx, task_rx): (
             mpsc::Sender<GremlinTask>,
             mpsc::Receiver<GremlinTask>,
@@ -382,7 +374,7 @@ impl DesktopGremlin {
         let mut should_check_for_action = true;
 
         let mut move_target: Option<Point> = None;
-        let velocity = 20;
+        let velocity = 200.0;
         let mut task_queue = VecDeque::new();
 
         let mut current_animation_name = String::new();
@@ -390,20 +382,39 @@ impl DesktopGremlin {
         let mut is_lmb_down = false;
         let (mut drag_start_x, mut drag_start_y) = (0.0, 0.0);
         let mut event_pump = self.sdl.event_pump().unwrap();
+        let mut last_moved_at = Instant::now();
+        let idle: Option<(Rc<Texture<'_>>, Animator)> = if
+            let Some(gremlin) = &mut self.current_gremlin &&
+            let Some(animation) = gremlin.animation_map.get("IDLE")
+        {
+            match
+                (
+                    <&AnimationProperties as TryInto<Animation>>::try_into(animation),
+                    animation.try_into(),
+                )
+            {
+                (Ok(animation), Ok(animator)) => {
+                    Some((
+                        Rc::new(
+                            animation.sprite_sheet.into_texture(&self.texture_creator).unwrap()
+                        ),
+                        animator,
+                    ))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
 
         let mut move_towards_cursor = false;
         let mut should_check_drag = false;
-
+        let (mut gremlin_x, mut gremlin_y) = (0, 0);
         loop {
-            if *should_exit.lock().unwrap() {
-                break;
-            }
-
             while let Some(event) = event_pump.poll_event() {
                 match event {
                     Event::Quit { .. } => {
                         let _ = task_tx_2.send(GremlinTask::PlayInterrupt("OUTRO".to_string()));
-                        // *should_exit.lock().unwrap() = true;
                     }
                     Event::MouseButtonDown { mouse_btn, .. } => {
                         match mouse_btn {
@@ -445,6 +456,7 @@ impl DesktopGremlin {
                                         GremlinTask::PlayInterrupt("CLICK".to_string())
                                     );
                                     move_towards_cursor = !move_towards_cursor;
+                                    last_moved_at = Instant::now();
                                 }
                                 if is_dragging && is_lmb_down {
                                     let _ = task_tx_2.send(
@@ -458,11 +470,70 @@ impl DesktopGremlin {
                             _ => (),
                         }
                     }
+                    Event::Window { win_event, .. } => {
+                        match win_event {
+                            sdl3::event::WindowEvent::Moved(x, y) => {
+                                (gremlin_x, gremlin_y) = (x, y);
+                            }
+                            _ => {}
+                        }
+                    }
 
                     _ => {}
                 }
             }
             // thread::sleep(Duration::from_millis(500));
+            let gremlin_position = Point::new(
+                gremlin_x + ((self.canvas.window().size().0 / 2) as i32),
+                gremlin_y + ((self.canvas.window().size().1 / 2) as i32)
+            );
+
+            // handle gremlin movement
+            if !is_dragging && move_towards_cursor && let Some(move_target) = move_target {
+                let (dir_x, dir_y) = get_move_direction(move_target, gremlin_position);
+                let tan =
+                    ((gremlin_position.y - move_target.y) as f32) /
+                    ((gremlin_position.x - move_target.x) as f32);
+                let alpha = tan.atan();
+
+                let (velo_x, x_anim) = match dir_x {
+                    DirectionX::None => (0.0, ""),
+                    DirectionX::Left => (-velocity, "LEFT"),
+                    DirectionX::Right => (velocity, "RIGHT"),
+                };
+                let (velo_y, y_anim) = match dir_y {
+                    DirectionY::None => (0.0, ""),
+                    DirectionY::Up => (-velocity, "UP"),
+                    DirectionY::Down => (velocity, "DOWN"),
+                };
+
+                let animation_name = match (dir_x, dir_y) {
+                    (DirectionX::None, DirectionY::None) => { "RUNIDLE".to_string() }
+                    (DirectionX::None, _) => { "RUN".to_string() + y_anim }
+                    (_, DirectionY::None) => { "RUN".to_string() + x_anim }
+                    (_, _) => { y_anim.to_string() + x_anim }
+                };
+                if current_animation_name != animation_name {
+                    let _ = task_tx_2.send(GremlinTask::PlayInterrupt(animation_name));
+                    task_queue.clear();
+                }
+
+                let (velo_x, velo_y) = (velo_x * alpha.cos().abs(), velo_y * alpha.sin().abs());
+
+                self.canvas
+                    .window_mut()
+                    .set_position(
+                        sdl3::video::WindowPos::Positioned(
+                            ((gremlin_x as f32) +
+                                velo_x * last_moved_at.elapsed().as_secs_f32()) as i32
+                        ),
+                        sdl3::video::WindowPos::Positioned(
+                            ((gremlin_y as f32) +
+                                velo_y * last_moved_at.elapsed().as_secs_f32()) as i32
+                        )
+                    );
+                last_moved_at = Instant::now();
+            }
 
             let mut task_board = None;
 
@@ -485,25 +556,36 @@ impl DesktopGremlin {
                     | GremlinTask::Play(animation_name)
                     | GremlinTask::PlayInterrupt(animation_name) => {
                         if
-                            animation_name == current_animation_name &&
-                            let Some(animation) = &mut gremlin.current_animation
+                            let Some(animator) = &mut gremlin.animator &&
+                            animation_name == current_animation_name
                         {
-                            animation.current_frame = 0;
+                            animator.current_frame = 0;
                         } else if
                             let Some(animation_props) = gremlin.animation_map.get(
                                 animation_name.as_str()
-                            ) &&
-                            let Ok(animation) =
-                                <&AnimationProperties as TryInto<Animation>>::try_into(
-                                    animation_props
-                                )
+                            )
                         {
-                            gremlin_texture = Some(
-                                animation.sprite_sheet.into_texture(&self.texture_creator).unwrap()
-                            );
-                            gremlin.current_animation = Some(animation);
-                            should_check_for_action = false;
-                            current_animation_name = animation_name;
+                            if animation_name == "IDLE".to_string() && let Some(ref idle) = idle {
+                                let _ = gremlin_texture.insert(idle.0.clone());
+                                gremlin.animator = Some(idle.1.clone());
+                            } else if
+                                let Ok(animation) =
+                                    <&AnimationProperties as TryInto<Animation>>::try_into(
+                                        animation_props
+                                    )
+                            {
+                                println!("Loaded from disk: {:?}", animation_name);
+                                gremlin_texture = Some(
+                                    Rc::new(
+                                        animation.sprite_sheet
+                                            .into_texture(&self.texture_creator)
+                                            .unwrap()
+                                    )
+                                );
+                                gremlin.animator = animation_props.try_into().ok();
+                                should_check_for_action = false;
+                                current_animation_name = animation_name;
+                            }
                         }
                     }
                     GremlinTask::Goto(x, y) => {
@@ -512,20 +594,16 @@ impl DesktopGremlin {
                 }
             }
 
-            // handle gremlin movement
-            if move_towards_cursor {
-            }
-
             // draws the next frame and update frame counter
             if
                 let Some(gremlin) = &mut self.current_gremlin &&
                 let Some(gremlin_texture) = &gremlin_texture &&
-                let Some(animation) = &mut gremlin.current_animation
+                let Some(animator) = &mut gremlin.animator
             {
                 self.canvas.clear();
-                self.canvas.copy(gremlin_texture, animation.get_frame_rect(), None).unwrap();
+                self.canvas.copy(&gremlin_texture, animator.get_frame_rect(), None).unwrap();
                 self.canvas.present();
-                if animation.current_frame + 1 == animation.sprite_sheet.frame_count {
+                if animator.current_frame + 1 == animator.animation_properties.sprite_count {
                     should_check_for_action = true;
                     if "OUTRO" == &current_animation_name {
                         println!("goodbye!");
@@ -533,10 +611,15 @@ impl DesktopGremlin {
                     }
                 }
 
-                animation.current_frame =
-                    (animation.current_frame + 1) % animation.sprite_sheet.frame_count;
-
+                animator.current_frame =
+                    (animator.current_frame + 1) % animator.animation_properties.sprite_count;
                 thread::sleep(Duration::from_secs_f32(1.0 / (GLOBAL_FRAMERATE as f32)));
+            }
+            if move_towards_cursor {
+                let (cursor_x, cursor_y) = get_cursor_position(&event_pump);
+                let _ = move_target.insert(Point::new(cursor_x as i32, cursor_y as i32));
+            } else {
+                move_target.take();
             }
         }
     }
@@ -599,17 +682,23 @@ pub fn get_move_direction(
     cursor_position: Point,
     gremlin_position: Point
 ) -> (DirectionX, DirectionY) {
-    let dir_x = if cursor_position.x < gremlin_position.x {
-        DirectionX::Left
-    } else if cursor_position.x > gremlin_position.x {
+    let cursor_rect = inflate(cursor_position, 300, 300);
+    if cursor_rect.contains_point(gremlin_position) {
+        return (DirectionX::None, DirectionY::None);
+    }
+
+    let dir_x = if cursor_rect.left() > gremlin_position.x {
         DirectionX::Right
+    } else if cursor_rect.right() < gremlin_position.x {
+        DirectionX::Left
     } else {
         DirectionX::None
     };
-    let dir_y = if cursor_position.y < gremlin_position.y {
-        DirectionY::Up
-    } else if cursor_position.y > gremlin_position.y {
+
+    let dir_y = if gremlin_position.y < cursor_rect.top() {
         DirectionY::Down
+    } else if gremlin_position.y > cursor_rect.bottom() {
+        DirectionY::Up
     } else {
         DirectionY::None
     };
@@ -757,4 +846,50 @@ pub enum DirectionY {
     None,
     Up,
     Down,
+}
+
+#[derive(Default, Clone, Hash, Debug)]
+pub struct Animator {
+    current_frame: u32,
+    texture_size: (u32, u32),
+    sprite_size: (u32, u32),
+    animation_properties: AnimationProperties,
+    column_count: u32,
+}
+
+pub const DEFAULT_COLUMN_COUNT: u32 = 10;
+
+impl TryFrom<&AnimationProperties> for Animator {
+    type Error = ();
+
+    fn try_from(value: &AnimationProperties) -> std::result::Result<Self, Self::Error> {
+        if
+            let Some(ref path) = value.sprite_path &&
+            let Ok(image_data) = image::open(path).map_err(|_| Err::<Self, ()>(()))
+        {
+            return Ok(Animator {
+                current_frame: Default::default(),
+                texture_size: (image_data.width(), image_data.height()),
+                animation_properties: value.clone(),
+                column_count: DEFAULT_COLUMN_COUNT,
+                sprite_size: (
+                    image_data.width().div_ceil(DEFAULT_COLUMN_COUNT),
+                    image_data.height().div_ceil(value.sprite_count.div_ceil(DEFAULT_COLUMN_COUNT)),
+                ),
+            });
+        }
+        Err(())
+    }
+}
+
+impl Animator {
+    pub fn get_frame_rect(&self) -> Rect {
+        let (sprite_width, sprite_height) = self.sprite_size;
+        Rect::new(
+            (((self.current_frame % self.column_count) as u32) * sprite_width) as i32,
+            (((self.current_frame / self.column_count) as u32) * sprite_height) as i32,
+            sprite_width,
+            sprite_height
+        )
+    }
 }
