@@ -56,7 +56,7 @@ use crate::{
     ui::{Component, Render, div},
     utils::{
         DirectionX, DirectionY, get_cursor_position, get_move_direction, get_png_list,
-        resize_image_to_window,
+        resize_image_to_window, win_to_rect,
     },
 };
 
@@ -191,13 +191,13 @@ impl TryInto<Animation> for &AnimationProperties {
 
 #[derive(Default)]
 pub struct Gremlin {
-    name: String,
+    pub name: String,
     // map between animation name and directory
-    animation_map: HashMap<String, AnimationProperties>,
-    metadata: HashMap<String, String>,
-    animator: Option<Animator>,
-    texture_cache: TextureCache,
-    texture: Option<Rc<Texture>>,
+    pub animation_map: HashMap<String, AnimationProperties>,
+    pub metadata: HashMap<String, String>,
+    pub animator: Option<Animator>,
+    pub texture_cache: TextureCache,
+    pub texture: Option<Rc<Texture>>,
 }
 
 pub struct DesktopGremlin {
@@ -214,8 +214,6 @@ pub struct DesktopGremlin {
     pub texture_creator: TextureCreator<WindowContext>,
     should_check_for_action: bool,
 }
-
-
 
 pub struct DisplayContext {
     pub usable_bounds: Rect,
@@ -645,7 +643,7 @@ impl DesktopGremlin {
                 thread::sleep(Duration::from_secs_f32(1.0 / (GLOBAL_FRAMERATE as f32)));
             }
             if move_towards_cursor {
-                let (cursor_x, cursor_y) = get_cursor_position(&event_pump);
+                let (cursor_x, cursor_y) = get_cursor_position();
                 let _ = move_target.insert(Point::new(cursor_x as i32, cursor_y as i32));
             } else {
                 move_target.take();
@@ -1102,11 +1100,11 @@ pub enum AnimationKind {
 
 #[derive(Default, Clone, Hash, Debug)]
 pub struct Animator {
-    current_frame: u32,
-    texture_size: (u32, u32),
-    sprite_size: (u32, u32),
-    animation_properties: AnimationProperties,
-    column_count: u32,
+    pub current_frame: u32,
+    pub texture_size: (u32, u32),
+    pub sprite_size: (u32, u32),
+    pub animation_properties: AnimationProperties,
+    pub column_count: u32,
 }
 
 pub const DEFAULT_COLUMN_COUNT: u32 = 10;
@@ -1173,11 +1171,6 @@ impl Animator {
     }
 }
 
-fn win_to_rect(window: &Window) -> Rect {
-    let (x, y) = window.position();
-    let (w, h) = window.size();
-    Rect::new(x, y, w, h)
-}
 #[derive(Default)]
 struct TextureCache {
     data: VecDeque<(String, TextureCacheItem)>,

@@ -127,8 +127,8 @@ pub fn get_writer<T: Fn(&mut (u8, u8, u8, u8))>(a: T) -> impl Fn(&mut [u8], usiz
         }
     }
 }
-
-pub fn get_cursor_position(event_pump: &EventPump) -> (f32, f32) {
+/// SAFETY: Only use this function when the Sdl context is still in scope and available.
+pub fn get_cursor_position() -> (f32, f32) {
     unsafe {
         let (mut x, mut y): (f32, f32) = (0.0, 0.0);
         let (x_ptr, y_ptr): (*mut f32, *mut f32) = (&mut x, &mut y);
@@ -198,4 +198,10 @@ impl MouseKeysState {
             _ => false,
         }
     }
+}
+
+pub fn win_to_rect(window: &Window) -> Rect {
+    let (x, y) = window.position();
+    let (w, h) = window.size();
+    Rect::new(x, y, w, h)
 }

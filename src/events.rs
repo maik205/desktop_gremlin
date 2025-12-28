@@ -26,8 +26,8 @@ pub enum EventData {
         y: f32,
     },
     Difference {
-        rel_x: f32,
-        rel_y: f32,
+        x_rel: f32,
+        y_rel: f32,
         x: f32,
         y: f32,
     },
@@ -92,6 +92,7 @@ impl From<sdl3::mouse::MouseButton> for MouseButton {
 
 pub struct EventMediator {
     mouse: MouseState,
+    should_check_drag: bool,
 }
 struct MouseState {
     down: MouseKeysState,
@@ -189,8 +190,8 @@ impl EventMediator {
                             event_set.insert(
                                 Event::Drag { mouse_btn: btn },
                                 Some(EventData::Difference {
-                                    rel_x: xrel,
-                                    rel_y: yrel,
+                                    x_rel: xrel,
+                                    y_rel: yrel,
                                     x,
                                     y,
                                 }),
