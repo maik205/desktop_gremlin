@@ -1,80 +1,61 @@
 use std::{
-    collections::{ HashMap, HashSet, LinkedList, VecDeque },
+    collections::{HashMap, HashSet, LinkedList, VecDeque},
     env,
     ffi::c_void,
-    fs::{ self },
+    fs::{self},
     io,
     marker::PhantomData,
-    path::{ Path, PathBuf },
+    path::{Path, PathBuf},
     ptr::null_mut,
     rc::Rc,
     str::FromStr,
-    sync::{ Arc, LazyLock, Mutex, mpsc::{ self, Receiver, Sender } },
-    thread::{ self, JoinHandle },
-    time::{ Duration, Instant },
+    sync::{
+        Arc, LazyLock, Mutex,
+        mpsc::{self, Receiver, Sender},
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
-
-use anyhow::{ Result };
-use bad_signals::signals::{ common::Signalable, signals::Signal };
-use image::{ DynamicImage, EncodableLayout };
+use anyhow::Result;
+use bad_signals::signals::{common::Signalable, signals::Signal};
+use image::{DynamicImage, EncodableLayout};
 // absolutely goated.
-static texture_creator: LazyLock<>= None;
 use sdl3::{
     // might move to winit & wgpu but,... ehhhhhhhhh too lazy.... i love sdl
-
     Sdl,
     event::Event as SdlEvent,
-    pixels::{ Color, PixelFormat },
-    rect::{ Point, Rect },
-    render::{ Canvas, FRect, Texture, TextureCreator },
+    pixels::{Color, PixelFormat},
+    rect::{Point, Rect},
+    render::{Canvas, FRect, Texture, TextureCreator},
     sys::{
         properties::SDL_GetPointerProperty,
         rect::SDL_Point,
         video::{
-            SDL_GetWindowProperties,
-            SDL_HitTestResult,
-            SDL_PROP_WINDOW_WIN32_HWND_POINTER,
-            SDL_SetWindowHitTest,
-            SDL_Window,
+            SDL_GetWindowProperties, SDL_HitTestResult, SDL_PROP_WINDOW_WIN32_HWND_POINTER,
+            SDL_SetWindowHitTest, SDL_Window,
         },
     },
-    video::{ Window, WindowBuilder, WindowContext, WindowFlags },
+    video::{Window, WindowBuilder, WindowContext, WindowFlags},
 };
 
 #[cfg(target_os = "windows")]
 use windows::Win32::{
-    Foundation::{ COLORREF, HWND },
+    Foundation::{COLORREF, HWND},
     UI::WindowsAndMessaging::{
-        GWL_EXSTYLE,
-        GetWindowLongW,
-        LWA_COLORKEY,
-        SetLayeredWindowAttributes,
-        SetWindowLongW,
+        GWL_EXSTYLE, GetWindowLongW, LWA_COLORKEY, SetLayeredWindowAttributes, SetWindowLongW,
         WS_EX_LAYERED,
     },
 };
 pub const GLOBAL_PIXEL_FORMAT: PixelFormat = PixelFormat::RGBA32;
 
 use crate::{
-    behavior::{ Behavior },
-    ui::{
-        Component,
-        Composable,
-        Div,
-        Render,
-        RenderStyle,
-        UI,
-        compose,
-        div,
-        p_fixed,
-        widgets::Image,
-    },
+    behavior::Behavior,
+    events::Event,
+    io::AsyncAnimationLoader,
+    ui::{Component, Render, div},
     utils::{
-        calculate_pix_from_parent,
-        get_cursor_position,
-        get_png_list,
-        inflate,
+        DirectionX, DirectionY, get_cursor_position, get_move_direction, get_png_list,
         resize_image_to_window,
     },
 };
@@ -95,18 +76,17 @@ impl SpriteSheet {
         self.frame_count.div_ceil(self.column_count)
     }
 
-    pub fn into_texture<'a>(
+    pub fn into_texture(
         &self,
-        texture_creator: TextureCreator<WindowContext>
-    ) -> Result<Texture<'a>, SpriteError> {
+        texture_creator: &TextureCreator<WindowContext>,
+    ) -> Result<Texture, SpriteError> {
         let bytes = match GLOBAL_PIXEL_FORMAT {
-            PixelFormat::RGBA32 => {
-                self.image
-                    .as_rgba8()
-                    .map_or(Err(SpriteError::PixelLoadError), |img_buffer| {
-                        Ok(img_buffer.as_bytes())
-                    })
-            }
+            PixelFormat::RGBA32 => self
+                .image
+                .as_rgba8()
+                .map_or(Err(SpriteError::PixelLoadError), |img_buffer| {
+                    Ok(img_buffer.as_bytes())
+                }),
             PixelFormat::RGB24 => {
                 self.image
                     .as_rgb8() // (a: &ImageBuffer<RB....>) => { return Ok(a.as_bytes());}
@@ -114,13 +94,12 @@ impl SpriteSheet {
                         Ok(img_buffer.as_bytes())
                     })
             }
-            _ => {
-                self.image
-                    .as_rgba8()
-                    .map_or(Err(SpriteError::PixelLoadError), |img_buffer| {
-                        Ok(img_buffer.as_bytes())
-                    })
-            }
+            _ => self
+                .image
+                .as_rgba8()
+                .map_or(Err(SpriteError::PixelLoadError), |img_buffer| {
+                    Ok(img_buffer.as_bytes())
+                }),
         };
 
         if let Ok(bytes) = bytes {
@@ -132,7 +111,7 @@ impl SpriteSheet {
                 .update(
                     None,
                     bytes,
-                    GLOBAL_PIXEL_FORMAT.bytes_per_pixel() * (self.image.width() as usize)
+                    GLOBAL_PIXEL_FORMAT.bytes_per_pixel() * (self.image.width() as usize),
                 )
                 .map_err(|_| SpriteError::TextureWriteError)?;
 
@@ -145,7 +124,9 @@ impl SpriteSheet {
     pub fn sprite_size(&self) -> (u32, u32) {
         (
             self.image.width().saturating_div(self.column_count as u32),
-            self.image.height().saturating_div(self.get_line_count() as u32),
+            self.image
+                .height()
+                .saturating_div(self.get_line_count() as u32),
         )
     }
 }
@@ -180,7 +161,7 @@ impl Animation {
             (((self.current_frame % self.sprite_sheet.column_count) as u32) * sprite_width) as i32,
             (((self.current_frame / self.sprite_sheet.column_count) as u32) * sprite_height) as i32,
             sprite_width,
-            sprite_height
+            sprite_height,
         )
     }
 }
@@ -189,7 +170,9 @@ impl TryInto<Animation> for &AnimationProperties {
     type Error = GremlinLoadError;
 
     fn try_into(self) -> std::result::Result<Animation, Self::Error> {
-        if let Some(path) = &self.sprite_path && let Ok(image) = image::open(path) {
+        if let Some(path) = &self.sprite_path
+            && let Ok(image) = image::open(path)
+        {
             let sprite_sheet = SpriteSheet {
                 column_count: 10,
                 frame_count: self.sprite_count as u16,
@@ -207,24 +190,19 @@ impl TryInto<Animation> for &AnimationProperties {
 }
 
 #[derive(Default)]
-pub struct Gremlin<'a> {
+pub struct Gremlin {
     name: String,
     // map between animation name and directory
     animation_map: HashMap<String, AnimationProperties>,
     metadata: HashMap<String, String>,
     animator: Option<Animator>,
-    texture_cache: TextureCache<'a>,
-    texture: Option<Rc<Texture<'a>>>,
+    texture_cache: TextureCache,
+    texture: Option<Rc<Texture>>,
 }
 
-struct TextureCreatorHolder<'a> {
-    texture_creator: TextureCreator<WindowContext>,
-    marker: PhantomData<&'a ()>,
-}
-
-pub struct DesktopGremlin<'a> {
+pub struct DesktopGremlin {
     pub sdl: Sdl,
-    pub current_gremlin: Option<Gremlin<'a>>,
+    pub current_gremlin: Option<Gremlin>,
     pub canvas: Canvas<Window>,
     pub should_exit: Arc<Mutex<bool>>,
     pub display_context: DisplayContext,
@@ -236,16 +214,12 @@ pub struct DesktopGremlin<'a> {
     pub texture_creator: TextureCreator<WindowContext>,
     should_check_for_action: bool,
 }
-#[derive(Default, Debug, Clone, Copy)]
-pub struct MouseState {
-    keys: MouseKeysState,
-    is_dragging: bool,
-}
+
 #[derive(Default, Debug, Clone, Copy)]
 pub struct MouseKeysState {
-    pub lmb: bool,
+    pub left: bool,
     pub middle: bool,
-    pub rmb: bool,
+    pub right: bool,
 }
 
 pub struct DisplayContext {
@@ -296,7 +270,7 @@ impl Default for LaunchArguments {
                 WindowFlags::TRANSPARENT,
                 WindowFlags::ALWAYS_ON_TOP,
                 WindowFlags::NOT_FOCUSABLE,
-                WindowFlags::BORDERLESS
+                WindowFlags::BORDERLESS,
             ],
         }
     }
@@ -316,13 +290,13 @@ impl LaunchArguments {
 unsafe extern "C" fn all_drag(
     _: *mut SDL_Window,
     _: *const SDL_Point,
-    _: *mut c_void
+    _: *mut c_void,
 ) -> SDL_HitTestResult {
     SDL_HitTestResult::NORMAL
 }
 
-impl<'app> DesktopGremlin<'app> {
-    pub fn new(launch_arguments: Option<LaunchArguments>) -> Result<DesktopGremlin<'app>> {
+impl DesktopGremlin {
+    pub fn new(launch_arguments: Option<LaunchArguments>) -> Result<DesktopGremlin> {
         let sdl = sdl3::init()?;
         let video = sdl.video()?;
         let launch_arguments = launch_arguments.unwrap_or_default();
@@ -331,10 +305,10 @@ impl<'app> DesktopGremlin<'app> {
             &video,
             &launch_arguments.title,
             launch_arguments.w,
-            launch_arguments.h
+            launch_arguments.h,
         )
-            .set_window_flags(launch_arguments.window_flags())
-            .build()?;
+        .set_window_flags(launch_arguments.window_flags())
+        .build()?;
 
         // window.set_mouse_grab(true);
 
@@ -344,7 +318,7 @@ impl<'app> DesktopGremlin<'app> {
             let hwnd = SDL_GetPointerProperty(
                 sdl_props,
                 SDL_PROP_WINDOW_WIN32_HWND_POINTER,
-                std::ptr::null_mut()
+                std::ptr::null_mut(),
             );
 
             let hwnd = HWND(hwnd);
@@ -395,8 +369,8 @@ impl<'app> DesktopGremlin<'app> {
     pub fn go<'texture>(mut self) {
         let should_exit = Arc::new(Mutex::new(false));
 
-        let texture_cache: Arc<Mutex<TextureCache<'_>>> = Default::default();
-        let mut gremlin_texture: Option<Rc<Texture<'_>>> = None;
+        let texture_cache: Arc<Mutex<TextureCache>> = Default::default();
+        let mut gremlin_texture: Option<Rc<Texture>> = None;
 
         let should_exit_tasketeer = Arc::clone(&should_exit);
         let (task_tx, _) = &self.task_channel;
@@ -447,14 +421,12 @@ impl<'app> DesktopGremlin<'app> {
                     SdlEvent::Quit { .. } => {
                         let _ = task_tx_2.send(GremlinTask::PlayInterrupt("OUTRO".to_string()));
                     }
-                    SdlEvent::MouseButtonDown { mouse_btn, .. } => {
-                        match mouse_btn {
-                            sdl3::mouse::MouseButton::Left => {
-                                is_lmb_down = true;
-                            }
-                            _ => (),
+                    SdlEvent::MouseButtonDown { mouse_btn, .. } => match mouse_btn {
+                        sdl3::mouse::MouseButton::Left => {
+                            is_lmb_down = true;
                         }
-                    }
+                        _ => (),
+                    },
                     SdlEvent::MouseMotion { x, y, .. } => {
                         if is_lmb_down && !is_dragging {
                             is_dragging = true;
@@ -464,51 +436,43 @@ impl<'app> DesktopGremlin<'app> {
                         }
                         if is_dragging && should_check_drag {
                             let (gremlin_x, gremlin_y) = get_window_pos(&self.canvas);
-                            self.canvas
-                                .window_mut()
-                                .set_position(
-                                    sdl3::video::WindowPos::Positioned(
-                                        gremlin_x.saturating_add((x - drag_start_x) as i32)
-                                    ),
-                                    sdl3::video::WindowPos::Positioned(
-                                        gremlin_y.saturating_add((y - drag_start_y) as i32)
-                                    )
-                                );
+                            self.canvas.window_mut().set_position(
+                                sdl3::video::WindowPos::Positioned(
+                                    gremlin_x.saturating_add((x - drag_start_x) as i32),
+                                ),
+                                sdl3::video::WindowPos::Positioned(
+                                    gremlin_y.saturating_add((y - drag_start_y) as i32),
+                                ),
+                            );
                         }
                         // only move every odd frame because moving the window will trigger another mousemove SdlEvent
                         should_check_drag = !should_check_drag;
                     }
 
-                    SdlEvent::MouseButtonUp { mouse_btn, .. } => {
-                        match mouse_btn {
-                            sdl3::mouse::MouseButton::Left => {
-                                if !is_dragging && is_lmb_down {
-                                    let _ = task_tx_2.send(
-                                        GremlinTask::PlayInterrupt("CLICK".to_string())
-                                    );
-                                    move_towards_cursor = !move_towards_cursor;
-                                    last_moved_at = Instant::now();
-                                }
-                                if is_dragging && is_lmb_down {
-                                    let _ = task_tx_2.send(
-                                        GremlinTask::PlayInterrupt("PAT".to_string())
-                                    );
-                                }
-                                let _ = task_tx_2.send(GremlinTask::Play("IDLE".to_string()));
-                                is_dragging = false;
-                                is_lmb_down = false;
+                    SdlEvent::MouseButtonUp { mouse_btn, .. } => match mouse_btn {
+                        sdl3::mouse::MouseButton::Left => {
+                            if !is_dragging && is_lmb_down {
+                                let _ =
+                                    task_tx_2.send(GremlinTask::PlayInterrupt("CLICK".to_string()));
+                                move_towards_cursor = !move_towards_cursor;
+                                last_moved_at = Instant::now();
                             }
-                            _ => (),
-                        }
-                    }
-                    SdlEvent::Window { win_event, .. } => {
-                        match win_event {
-                            sdl3::event::WindowEvent::Moved(x, y) => {
-                                (gremlin_x, gremlin_y) = (x, y);
+                            if is_dragging && is_lmb_down {
+                                let _ =
+                                    task_tx_2.send(GremlinTask::PlayInterrupt("PAT".to_string()));
                             }
-                            _ => {}
+                            let _ = task_tx_2.send(GremlinTask::Play("IDLE".to_string()));
+                            is_dragging = false;
+                            is_lmb_down = false;
                         }
-                    }
+                        _ => (),
+                    },
+                    SdlEvent::Window { win_event, .. } => match win_event {
+                        sdl3::event::WindowEvent::Moved(x, y) => {
+                            (gremlin_x, gremlin_y) = (x, y);
+                        }
+                        _ => {}
+                    },
 
                     _ => {}
                 }
@@ -519,9 +483,12 @@ impl<'app> DesktopGremlin<'app> {
             // handle gremlin movement
             let gremlin_position = Point::new(
                 gremlin_x + ((self.canvas.window().size().0 / 2) as i32),
-                gremlin_y + ((self.canvas.window().size().1 / 2) as i32)
+                gremlin_y + ((self.canvas.window().size().1 / 2) as i32),
             );
-            if !is_dragging && move_towards_cursor && let Some(move_target) = move_target {
+            if !is_dragging
+                && move_towards_cursor
+                && let Some(move_target) = move_target
+            {
                 let (dir_x, dir_y) = get_move_direction(move_target, {
                     let mut win_rect = win_to_rect(self.canvas.window());
                     if win_rect.contains_point(move_target) {
@@ -530,9 +497,8 @@ impl<'app> DesktopGremlin<'app> {
                     }
                     win_rect
                 });
-                let tan =
-                    ((gremlin_position.y - move_target.y) as f32) /
-                    ((gremlin_position.x - move_target.x) as f32);
+                let tan = ((gremlin_position.y - move_target.y) as f32)
+                    / ((gremlin_position.x - move_target.x) as f32);
                 let alpha = tan.atan();
 
                 let (velo_x, x_anim) = match dir_x {
@@ -547,10 +513,10 @@ impl<'app> DesktopGremlin<'app> {
                 };
 
                 let animation_name = match (dir_x, dir_y) {
-                    (DirectionX::None, DirectionY::None) => { "RUNIDLE".to_string() }
-                    (DirectionX::None, _) => { "RUN".to_string() + y_anim }
-                    (_, DirectionY::None) => { "RUN".to_string() + x_anim }
-                    (_, _) => { y_anim.to_string() + x_anim }
+                    (DirectionX::None, DirectionY::None) => "RUNIDLE".to_string(),
+                    (DirectionX::None, _) => "RUN".to_string() + y_anim,
+                    (_, DirectionY::None) => "RUN".to_string() + x_anim,
+                    (_, _) => y_anim.to_string() + x_anim,
                 };
                 if current_animation_name != animation_name {
                     let _ = task_tx_2.send(GremlinTask::PlayInterrupt(animation_name));
@@ -559,18 +525,16 @@ impl<'app> DesktopGremlin<'app> {
 
                 let (velo_x, velo_y) = (velo_x * alpha.cos().abs(), velo_y * alpha.sin().abs());
 
-                self.canvas
-                    .window_mut()
-                    .set_position(
-                        sdl3::video::WindowPos::Positioned(
-                            ((gremlin_x as f32) +
-                                velo_x * last_moved_at.elapsed().as_secs_f32()) as i32
-                        ),
-                        sdl3::video::WindowPos::Positioned(
-                            ((gremlin_y as f32) +
-                                velo_y * last_moved_at.elapsed().as_secs_f32()) as i32
-                        )
-                    );
+                self.canvas.window_mut().set_position(
+                    sdl3::video::WindowPos::Positioned(
+                        ((gremlin_x as f32) + velo_x * last_moved_at.elapsed().as_secs_f32())
+                            as i32,
+                    ),
+                    sdl3::video::WindowPos::Positioned(
+                        ((gremlin_y as f32) + velo_y * last_moved_at.elapsed().as_secs_f32())
+                            as i32,
+                    ),
+                );
                 last_moved_at = Instant::now();
             }
 
@@ -585,67 +549,69 @@ impl<'app> DesktopGremlin<'app> {
                 &self.task_queue.push_back(task);
             }
 
-            if let None = task_board && should_check_for_action {
+            if let None = task_board
+                && should_check_for_action
+            {
                 task_board = self.task_queue.pop_front();
             }
 
             let mut cache_hit_index: Option<usize> = None;
-            if let Some(task_board) = task_board && let Some(gremlin) = &mut self.current_gremlin {
+            if let Some(task_board) = task_board
+                && let Some(gremlin) = &mut self.current_gremlin
+            {
                 // update the texture according to the task
                 match task_board {
-                    | GremlinTask::Play(animation_name)
+                    GremlinTask::Play(animation_name)
                     | GremlinTask::PlayInterrupt(animation_name) => {
-                        if
-                            let Some(animator) = &mut gremlin.animator &&
-                            animation_name == current_animation_name
+                        if let Some(animator) = &mut gremlin.animator
+                            && animation_name == current_animation_name
                         {
                             animator.current_frame = 0;
-                        } else if
-                            let Some(animation_props) = gremlin.animation_map.get(
-                                animation_name.as_str()
-                            )
+                        } else if let Some(animation_props) =
+                            gremlin.animation_map.get(animation_name.as_str())
                         {
                             let cache_lookup = {
                                 lookup_cache(
                                     animation_name.as_str(),
-                                    &texture_cache.lock().unwrap()
-                                ).map(|a| { a.0 })
+                                    &texture_cache.lock().unwrap(),
+                                )
+                                .map(|a| a.0)
                             };
                             if let Some(index) = cache_lookup {
-                                rearrange_cache(index, &mut texture_cache.lock().unwrap());
+                                texture_cache.lock().unwrap().rearrange(index);
                                 // unwrap safety: the mutex is guaranteed to not be poisoned and released after the rearrange cache function goes out of scope
                                 let lock = &texture_cache.lock().unwrap();
                                 // unwrap safety: the back element is guaranteed to exist because the index before rearranging exists.
-                                let (animator, texture) = &lock.back().unwrap().1;
+                                let (animator, texture) = &lock.data.back().unwrap().1;
                                 let _ = gremlin.animator.insert(animator.clone());
                                 let _ = gremlin_texture.insert(texture.clone());
                                 let _ = cache_hit_index.insert(index);
-                            } else if
-                                let Ok(mut animation) =
-                                    <&AnimationProperties as TryInto<Animation>>::try_into(
-                                        animation_props
-                                    )
+                            } else if let Ok(mut animation) =
+                                <&AnimationProperties as TryInto<Animation>>::try_into(
+                                    animation_props,
+                                )
                             {
                                 if animation.properties.sprite_count > 110 {
                                     animation.sprite_sheet.image = resize_image_to_window(
                                         animation.sprite_sheet.image,
                                         self.canvas.window(),
-                                        animation_props.clone()
+                                        animation_props.clone(),
                                     );
                                 }
 
-                                let a = self.canvas.texture_creator();
                                 let texture_rc = Rc::new(
-                                    animation.sprite_sheet.into_texture(a).unwrap()
+                                    animation
+                                        .sprite_sheet
+                                        .into_texture(&self.texture_creator)
+                                        .unwrap(),
                                 );
                                 gremlin_texture = Some(texture_rc.clone());
                                 let animator = Some((&animation).into());
                                 gremlin.animator = animator;
                                 if let Some(ref animator) = gremlin.animator {
-                                    cache_texture(
-                                        animation_name.clone(),
+                                    texture_cache.lock().unwrap().cache(
+                                        animator.animation_properties.animation_name.clone(),
                                         (animator.clone(), texture_rc),
-                                        &mut texture_cache.lock().unwrap()
                                     );
                                 }
                             }
@@ -662,13 +628,14 @@ impl<'app> DesktopGremlin<'app> {
             }
 
             // draws the next frame and update frame counter
-            if
-                let Some(gremlin) = &mut self.current_gremlin &&
-                let Some(gremlin_texture) = &gremlin_texture &&
-                let Some(animator) = &mut gremlin.animator
+            if let Some(gremlin) = &mut self.current_gremlin
+                && let Some(gremlin_texture) = &gremlin_texture
+                && let Some(animator) = &mut gremlin.animator
             {
                 self.canvas.clear();
-                self.canvas.copy(&gremlin_texture, animator.get_frame_rect(), None).unwrap();
+                self.canvas
+                    .copy(&gremlin_texture, animator.get_frame_rect(), None)
+                    .unwrap();
                 self.canvas.present();
                 if animator.current_frame + 1 == animator.animation_properties.sprite_count {
                     should_check_for_action = true;
@@ -697,10 +664,7 @@ impl<'app> DesktopGremlin<'app> {
 
     fn handle_sdl_events(&mut self, event_pump: &mut sdl3::EventPump) {}
 
-    fn load_gremlin<'gremlin>(
-        &mut self,
-        gremlin_txt_path: String
-    ) -> Result<Gremlin<'gremlin>, GremlinLoadError> {
+    fn load_gremlin(&mut self, gremlin_txt_path: String) -> Result<Gremlin, GremlinLoadError> {
         let path = Path::new(gremlin_txt_path.as_str());
         let gremlin_txt = fs::read_to_string(path)?;
         let mut gremlin = Gremlin::default();
@@ -717,22 +681,26 @@ impl<'app> DesktopGremlin<'app> {
                             gremlin.name = String::from(split[1]);
                         }
                         _ => {
-                            gremlin.metadata.insert(split[0].to_string(), split[1].to_string());
+                            gremlin
+                                .metadata
+                                .insert(split[0].to_string(), split[1].to_string());
                         }
                     }
                     continue;
                 }
 
                 if let Ok(count) = split[1].parse::<u32>() {
-                    let animation_properties = AnimationProperties::new(
-                        split[0].to_string(),
-                        count
-                    );
-                    gremlin.animation_map.insert(split[0].to_string(), animation_properties);
+                    let animation_properties =
+                        AnimationProperties::new(split[0].to_string(), count);
+                    gremlin
+                        .animation_map
+                        .insert(split[0].to_string(), animation_properties);
                 }
             }
         }
-        if let Some(parent) = path.parent() && let Some(parent_path_str) = parent.to_str() {
+        if let Some(parent) = path.parent()
+            && let Some(parent_path_str) = parent.to_str()
+        {
             let mut png_list = HashMap::new();
             // will error out if i can't get into da directories
             get_png_list(parent_path_str, 5, &mut png_list)?;
@@ -748,9 +716,6 @@ impl<'app> DesktopGremlin<'app> {
             Err(GremlinLoadError::FsError(None))
         }
     }
-
-    fn cache_texture_inner(&'s)
-
 
     pub fn update(&mut self) {
         let mut event_set = HashSet::new();
@@ -770,6 +735,7 @@ impl<'app> DesktopGremlin<'app> {
                     }
                 }
                 SdlEvent::MouseMotion { x, y, .. } => {
+                    // implemented
                     // if is_lmb_down && !is_dragging {
                     //     is_dragging = true;
                     //     let _ = task_tx_2.send(GremlinTask::PlayInterrupt("GRAB".to_string()));
@@ -904,10 +870,11 @@ impl<'app> DesktopGremlin<'app> {
         }
 
         let mut cache_hit_index: Option<usize> = None;
-        let gremlin_ref = self.current_gremlin.as_mut().unwrap();
 
-        if let Some(task_board) = task_board && let gremlin = gremlin_ref {
-            let mut texture_cache = &mut gremlin.texture_cache;
+        if let Some(task_board) = task_board
+            && let Some(gremlin) = &mut self.current_gremlin
+        {
+            let texture_cache = &mut gremlin.texture_cache;
             // update the texture according to the task
             match task_board {
                 GremlinTask::Play(animation_name) | GremlinTask::PlayInterrupt(animation_name) => {
@@ -917,48 +884,42 @@ impl<'app> DesktopGremlin<'app> {
                     // {
                     //     animator.current_frame = 0;
                     // }else
-                    if
-                        let Some(animation_props) = gremlin.animation_map.get(
-                            animation_name.as_str()
-                        )
+                    if let Some(animation_props) =
+                        gremlin.animation_map.get(animation_name.as_str())
                     {
-                        let cache_lookup = {
-                            lookup_cache(animation_name.as_str(), &texture_cache).map(|a| { a.0 })
-                        };
+                        let cache_lookup =
+                            { lookup_cache(animation_name.as_str(), &texture_cache).map(|a| a.0) };
                         if let Some(index) = cache_lookup {
-                            rearrange_cache(index, &mut texture_cache);
-                            let lock = &texture_cache;
-                            let (animator, texture) = &lock.back().unwrap().1;
+                            texture_cache.rearrange(index);
+                            let lock = texture_cache;
+                            let (animator, texture) = &lock.data.back().unwrap().1;
                             let _ = gremlin.animator.insert(animator.clone());
                             let _ = gremlin.texture.insert(texture.clone());
                             let _ = cache_hit_index.insert(index);
-                        } else if
-                            let Ok(mut animation) =
-                                <&AnimationProperties as TryInto<Animation>>::try_into(
-                                    animation_props
-                                )
+                        } else if let Ok(mut animation) =
+                            <&AnimationProperties as TryInto<Animation>>::try_into(animation_props)
                         {
                             if animation.properties.sprite_count > 110 {
                                 animation.sprite_sheet.image = resize_image_to_window(
                                     animation.sprite_sheet.image,
                                     self.canvas.window(),
-                                    animation_props.clone()
+                                    animation_props.clone(),
                                 );
                             }
 
-                            let texture_rc: Rc<Texture<'app>> = Rc::new(
-                                animation.sprite_sheet
-                                    .into_texture(self.canvas.texture_creator())
-                                    .unwrap()
+                            let texture_rc: Rc<Texture> = Rc::new(
+                                animation
+                                    .sprite_sheet
+                                    .into_texture(&self.texture_creator)
+                                    .unwrap(),
                             );
                             gremlin.texture = Some(texture_rc.clone());
                             let animator = Some((&animation).into());
                             gremlin.animator = animator;
                             if let Some(ref animator) = gremlin.animator {
-                                cache_texture(
-                                    animation_name.clone(),
+                                texture_cache.cache(
+                                    animator.animation_properties.animation_name.clone(),
                                     (animator.clone(), texture_rc),
-                                    &mut texture_cache
                                 );
                             }
                         }
@@ -974,13 +935,14 @@ impl<'app> DesktopGremlin<'app> {
         }
 
         // draws the next frame and update frame counter
-        if
-            let Some(gremlin) = &mut self.current_gremlin &&
-            let Some(gremlin_texture) = &gremlin.texture &&
-            let Some(animator) = &mut gremlin.animator
+        if let Some(gremlin) = &mut self.current_gremlin
+            && let Some(gremlin_texture) = &gremlin.texture
+            && let Some(animator) = &mut gremlin.animator
         {
             self.canvas.clear();
-            self.canvas.copy(&gremlin_texture, animator.get_frame_rect(), None).unwrap();
+            self.canvas
+                .copy(&gremlin_texture, animator.get_frame_rect(), None)
+                .unwrap();
             self.canvas.present();
             if animator.current_frame + 1 == animator.animation_properties.sprite_count {
                 self.should_check_for_action = true;
@@ -1000,29 +962,6 @@ impl<'app> DesktopGremlin<'app> {
     }
 }
 
-pub fn get_move_direction(cursor_position: Point, gremlin_rect: Rect) -> (DirectionX, DirectionY) {
-    if gremlin_rect.contains_point(cursor_position) {
-        return (DirectionX::None, DirectionY::None);
-    }
-
-    let dir_x = if cursor_position.x > gremlin_rect.right() {
-        DirectionX::Right
-    } else if cursor_position.x < gremlin_rect.left() {
-        DirectionX::Left
-    } else {
-        DirectionX::None
-    };
-
-    let dir_y = if cursor_position.y < gremlin_rect.top() {
-        DirectionY::Up
-    } else if cursor_position.y > gremlin_rect.bottom() {
-        DirectionY::Down
-    } else {
-        DirectionY::None
-    };
-    (dir_x, dir_y)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GremlinTask {
     Play(String),
@@ -1032,11 +971,21 @@ pub enum GremlinTask {
 
 // impl Into<Rect> for FRect {
 pub fn into_rect(f_rect: FRect) -> Rect {
-    Rect::new(f_rect.x as i32, f_rect.y as i32, f_rect.w as u32, f_rect.h as u32)
+    Rect::new(
+        f_rect.x as i32,
+        f_rect.y as i32,
+        f_rect.w as u32,
+        f_rect.h as u32,
+    )
 }
 pub fn into_opt_rect(f_rect: Option<FRect>) -> Option<Rect> {
     if let Some(f_rect) = f_rect {
-        return Some(Rect::new(f_rect.x as i32, f_rect.y as i32, f_rect.w as u32, f_rect.h as u32));
+        return Some(Rect::new(
+            f_rect.x as i32,
+            f_rect.y as i32,
+            f_rect.w as u32,
+            f_rect.h as u32,
+        ));
     }
     None
 }
@@ -1046,7 +995,12 @@ pub fn get_window_pos(canvas: &Canvas<Window>) -> (i32, i32) {
 }
 
 pub fn into_frect(rect: Rect) -> FRect {
-    FRect { x: rect.x as f32, y: rect.y as f32, w: rect.w as f32, h: rect.h as f32 }
+    FRect {
+        x: rect.x as f32,
+        y: rect.y as f32,
+        w: rect.w as f32,
+        h: rect.h as f32,
+    }
 }
 // }
 
@@ -1087,8 +1041,7 @@ impl Render for Button {
     fn render(
         &self,
         texture: &mut Texture,
-        rect: Option<FRect>
-        // styles: Option<Vec<RenderStyle>>
+        rect: Option<FRect>, // styles: Option<Vec<RenderStyle>>
     ) -> Result<()> {
         let _ = texture.with_lock(into_opt_rect(rect), |buf, _| {
             for i in 0..buf.len() {
@@ -1115,8 +1068,7 @@ impl Render for Button {
     fn render_canvas(
         &self,
         canvas: &mut Canvas<Window>,
-        rect: Option<FRect>
-        // styles: Option<Vec<RenderStyle>>
+        rect: Option<FRect>, // styles: Option<Vec<RenderStyle>>
     ) -> Result<()> {
         let color = canvas.draw_color();
         canvas.set_draw_color(self.color);
@@ -1153,19 +1105,6 @@ pub enum AnimationKind {
     Hover,
 }
 
-#[derive(Clone, Copy, Debug, Hash)]
-pub enum DirectionX {
-    None,
-    Left,
-    Right,
-}
-#[derive(Clone, Copy, Debug, Hash)]
-pub enum DirectionY {
-    None,
-    Up,
-    Down,
-}
-
 #[derive(Default, Clone, Hash, Debug)]
 pub struct Animator {
     current_frame: u32,
@@ -1181,9 +1120,8 @@ impl TryFrom<&AnimationProperties> for Animator {
     type Error = ();
 
     fn try_from(value: &AnimationProperties) -> std::result::Result<Self, Self::Error> {
-        if
-            let Some(ref path) = value.sprite_path &&
-            let Ok(image_data) = image::open(path).map_err(|_| Err::<Self, ()>(()))
+        if let Some(ref path) = value.sprite_path
+            && let Ok(image_data) = image::open(path).map_err(|_| Err::<Self, ()>(()))
         {
             return Ok(Animator {
                 current_frame: Default::default(),
@@ -1192,7 +1130,9 @@ impl TryFrom<&AnimationProperties> for Animator {
                 column_count: DEFAULT_COLUMN_COUNT,
                 sprite_size: (
                     image_data.width().div_ceil(DEFAULT_COLUMN_COUNT),
-                    image_data.height().div_ceil(value.sprite_count.div_ceil(DEFAULT_COLUMN_COUNT)),
+                    image_data
+                        .height()
+                        .div_ceil(value.sprite_count.div_ceil(DEFAULT_COLUMN_COUNT)),
                 ),
             });
         }
@@ -1204,10 +1144,19 @@ impl From<&Animation> for Animator {
     fn from(value: &Animation) -> Self {
         Self {
             current_frame: Default::default(),
-            texture_size: (value.sprite_sheet.image.width(), value.sprite_sheet.image.height()),
+            texture_size: (
+                value.sprite_sheet.image.width(),
+                value.sprite_sheet.image.height(),
+            ),
             sprite_size: (
-                value.sprite_sheet.image.width().div_ceil(DEFAULT_COLUMN_COUNT),
-                value.sprite_sheet.image
+                value
+                    .sprite_sheet
+                    .image
+                    .width()
+                    .div_ceil(DEFAULT_COLUMN_COUNT),
+                value
+                    .sprite_sheet
+                    .image
                     .height()
                     .div_ceil(value.properties.sprite_count.div_ceil(DEFAULT_COLUMN_COUNT)),
             ),
@@ -1224,7 +1173,7 @@ impl Animator {
             (((self.current_frame % self.column_count) as u32) * sprite_width) as i32,
             (((self.current_frame / self.column_count) as u32) * sprite_height) as i32,
             sprite_width,
-            sprite_height
+            sprite_height,
         )
     }
 }
@@ -1234,14 +1183,19 @@ fn win_to_rect(window: &Window) -> Rect {
     let (w, h) = window.size();
     Rect::new(x, y, w, h)
 }
+#[derive(Default)]
+struct TextureCache {
+    data: VecDeque<(String, TextureCacheItem)>,
+}
+// /
+type TextureCacheItem = (Animator, Rc<Texture>);
 
-type TextureCache<'a> = VecDeque<(String, TextureCacheItem<'a>)>;
-type TextureCacheItem<'a> = (Animator, Rc<Texture<'a>>);
 fn lookup_cache<'a>(
     animation_name: &str,
-    cache: &'a TextureCache
-) -> Option<(usize, TextureCacheItem<'a>)> {
+    cache: &'a TextureCache,
+) -> Option<(usize, TextureCacheItem)> {
     cache
+        .data
         .iter()
         .enumerate()
         .rev()
@@ -1249,203 +1203,30 @@ fn lookup_cache<'a>(
         .map(|a| (a.0, a.1.1.clone()))
 }
 
-// rearrange to purge cache later with a LRU policy
-fn rearrange_cache(index: usize, cache: &mut TextureCache) {
-    if let Some(item) = cache.remove(index) {
-        cache.push_back(item);
+impl TextureCache {
+    // rearrange to purge cache later with a LRU policy
+    fn rearrange(&mut self, access_index: usize) {
+        if let Some(item) = self.data.remove(access_index) {
+            self.data.push_back(item);
+        }
+    }
+
+    fn print(&self) {
+        let mut res = String::new();
+        for (name, _) in &self.data {
+            res += &(name.to_owned() + " ");
+        }
+        println!("{}", res)
+    }
+    fn cache(&mut self, name: String, texture: TextureCacheItem) {
+        match &self.data.len() {
+            CACHE_CAPACITY.. => {
+                self.data.pop_front();
+            }
+            _ => (),
+        }
+        self.data.push_back((name, texture));
     }
 }
 
 const CACHE_CAPACITY: usize = 10;
-
-fn print_cache<'a>(cache: &TextureCache<'a>) {
-    let mut res = String::new();
-    for (name, _) in cache {
-        res += &(name.to_owned() + " ");
-    }
-    println!("{}", res)
-}
-
-fn cache_texture<'a>(name: String, texture: TextureCacheItem<'a>, cache: &mut TextureCache<'a>) {
-    match cache.len() {
-        CACHE_CAPACITY.. => {
-            cache.pop_front();
-        }
-        _ => (),
-    }
-    cache.push_back((name, texture));
-}
-pub enum LoaderTask {
-    Load(AnimationProperties),
-    Die,
-}
-
-pub struct AsyncAnimationLoader {
-    thread_handle: Option<JoinHandle<()>>,
-    pub task_tx: Sender<LoaderTask>,
-    pub result_rx: Receiver<(String, Animation)>,
-}
-
-impl Default for AsyncAnimationLoader {
-    fn default() -> Self {
-        let (task_tx, task_rx): (Sender<LoaderTask>, Receiver<LoaderTask>) = mpsc::channel();
-        let (result_tx, result_rx): (
-            Sender<(String, Animation)>,
-            Receiver<(String, Animation)>,
-        ) = mpsc::channel();
-
-        Self {
-            thread_handle: Some(
-                thread::spawn(move || {
-                    let handle_list: Arc<
-                        Mutex<Vec<JoinHandle<(String, Animation)>>>
-                    > = Default::default();
-                    let checker_handle_list = Arc::clone(&handle_list);
-                    let (checker_heartbeat_tx, checker_heartbeat_rx): (
-                        Sender<bool>,
-                        Receiver<bool>,
-                    ) = mpsc::channel();
-                    let checker_heartbeat_tx_outer = checker_heartbeat_tx.clone();
-
-                    // the checker
-                    thread::spawn(move || {
-                        while
-                            let Ok(true) = checker_heartbeat_rx.recv_timeout(Duration::from_secs(1))
-                        {
-                            let mut finished_handles: Vec<usize> = Default::default();
-                            let mut handle_list = checker_handle_list.lock().unwrap();
-                            if handle_list.len() > 0 {
-                                for (index, handle) in handle_list.iter().enumerate() {
-                                    if handle.is_finished() {
-                                        finished_handles.push(index);
-                                    }
-                                }
-                            }
-
-                            for handle_indx in finished_handles.iter() {
-                                if let Ok(result) = handle_list.remove(*handle_indx).join() {
-                                    let _ = result_tx.send(result);
-                                }
-                            }
-
-                            finished_handles.clear();
-                        }
-                        println!("loader killed");
-                    });
-
-                    // the processor
-                    thread::spawn(move || {
-                        while let Ok(task) = task_rx.recv() {
-                            match task {
-                                LoaderTask::Load(animation_properties) => {
-                                    handle_list
-                                        .lock()
-                                        .unwrap()
-                                        .push(
-                                            thread::spawn(move || {
-                                                (
-                                                    animation_properties.animation_name.clone(),
-                                                    <&AnimationProperties as TryInto<Animation>>
-                                                        ::try_into(&animation_properties)
-                                                        .unwrap(),
-                                                )
-                                            })
-                                        );
-                                }
-                                LoaderTask::Die => {
-                                    let _ = checker_heartbeat_tx.send(false);
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        }
-                    });
-                    loop {
-                        if let Ok(_) = checker_heartbeat_tx_outer.send(true) {
-                            thread::sleep(Duration::from_micros(500));
-                        } else {
-                            break;
-                        }
-                    }
-                })
-            ),
-            task_tx,
-            result_rx,
-        }
-    }
-}
-
-impl Drop for AsyncAnimationLoader {
-    fn drop(&mut self) {
-        let _ = self.task_tx.send(LoaderTask::Die);
-        if let Some(handle) = self.thread_handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash)]
-pub enum Event {
-    Quit,
-    MouseButtonDown {
-        mouse_btn: MouseButton,
-    },
-    MouseMotion {
-        x: i32,
-        y: i32,
-    },
-    MouseButtonUp {
-        mouse_btn: MouseButton,
-    },
-    Window {
-        win_event: WindowEvent,
-    },
-}
-
-#[derive(PartialEq, Eq, Hash)]
-pub enum MouseButton {
-    Left,
-    Right,
-    Middle,
-}
-#[derive(PartialEq, Eq, Hash)]
-pub enum WindowEvent {
-    Moved(i32, i32),
-}
-
-impl From<sdl3::event::Event> for Event {
-    fn from(value: sdl3::event::Event) -> Self {
-        match value {
-            SdlEvent::Quit { .. } => Event::Quit,
-            SdlEvent::MouseButtonDown { mouse_btn, .. } =>
-                Event::MouseButtonDown { mouse_btn: MouseButton::from(mouse_btn) },
-
-            SdlEvent::MouseButtonUp { mouse_btn, .. } =>
-                Event::MouseButtonUp { mouse_btn: MouseButton::from(mouse_btn) },
-            SdlEvent::MouseMotion { x, y, .. } => Event::MouseMotion { x: x as i32, y: y as i32 },
-            SdlEvent::Window { win_event, .. } =>
-                Event::Window { win_event: WindowEvent::from(win_event) },
-            _ => todo!(),
-        }
-    }
-}
-
-impl From<sdl3::event::WindowEvent> for WindowEvent {
-    fn from(value: sdl3::event::WindowEvent) -> Self {
-        match value {
-            sdl3::event::WindowEvent::Moved(x, y) => WindowEvent::Moved(x, y),
-            _ => todo!(),
-        }
-    }
-}
-
-impl From<sdl3::mouse::MouseButton> for MouseButton {
-    fn from(value: sdl3::mouse::MouseButton) -> Self {
-        match value {
-            sdl3::mouse::MouseButton::Left => MouseButton::Left,
-            sdl3::mouse::MouseButton::Right => MouseButton::Right,
-            sdl3::mouse::MouseButton::Middle => MouseButton::Middle,
-            _ => todo!(),
-        }
-    }
-}

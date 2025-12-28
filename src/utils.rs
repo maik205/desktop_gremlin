@@ -1,20 +1,16 @@
-use std::{ collections::HashMap, fs::read_dir, io, path::PathBuf };
+use std::{collections::HashMap, fs::read_dir, io, path::PathBuf};
 
-use image::{ DynamicImage, EncodableLayout };
+use image::{DynamicImage, EncodableLayout};
 use sdl3::{
     EventPump,
     pixels::PixelFormat,
-    rect::{ Point, Rect },
+    rect::{Point, Rect},
     sys::mouse::SDL_GetGlobalMouseState,
-    video::{ Window },
+    video::Window,
 };
 
-use crate::sprite::{
-    AnimationProperties,
-    DEFAULT_COLUMN_COUNT,
-    GLOBAL_PIXEL_FORMAT,
-    SizeUnit,
-    SpriteError,
+use crate::gremlin::{
+    AnimationProperties, DEFAULT_COLUMN_COUNT, GLOBAL_PIXEL_FORMAT, SizeUnit, SpriteError,
 };
 
 pub fn inflate(point: Point, x: u32, y: u32) -> Rect {
@@ -22,29 +18,34 @@ pub fn inflate(point: Point, x: u32, y: u32) -> Rect {
         (point.x as i32).saturating_sub(x.saturating_div(2) as i32),
         (point.y as i32).saturating_sub(y.saturating_div(2) as i32),
         x,
-        y
+        y,
     )
 }
 pub fn get_png_list(
     dir: &str,
     max_depth: u16,
-    png_list: &mut HashMap<String, PathBuf>
+    png_list: &mut HashMap<String, PathBuf>,
 ) -> Result<(), io::Error> {
     for entry_res in read_dir(dir)? {
         if let Ok(entry) = entry_res {
             if max_depth > 0 {
                 if let Ok(ft) = entry.file_type() {
-                    if ft.is_dir() && let Some(path_str) = entry.path().to_str() {
+                    if ft.is_dir()
+                        && let Some(path_str) = entry.path().to_str()
+                    {
                         // should explode unknowingly
                         let _ = get_png_list(&path_str, max_depth - 1, png_list);
-                    } else if
-                        ft.is_file() &&
-                        let Some(file_name) = entry.file_name().to_str() &&
-                        file_name.ends_with(".png")
+                    } else if ft.is_file()
+                        && let Some(file_name) = entry.file_name().to_str()
+                        && file_name.ends_with(".png")
                     {
                         png_list.insert(
-                            file_name.to_uppercase().strip_suffix(".PNG").unwrap().to_string(),
-                            entry.path()
+                            file_name
+                                .to_uppercase()
+                                .strip_suffix(".PNG")
+                                .unwrap()
+                                .to_string(),
+                            entry.path(),
                         );
                     }
                 }
@@ -57,29 +58,33 @@ pub fn get_png_list(
 pub fn resize_image_to_window(
     image: DynamicImage,
     window: &Window,
-    animation_properties: AnimationProperties
+    animation_properties: AnimationProperties,
 ) -> DynamicImage {
     let scale_factor = (3, 5);
     let (sprite_width, sprite_height) = window.size();
     let (target_width, target_height) = (
         (DEFAULT_COLUMN_COUNT * sprite_width * scale_factor.0) / scale_factor.1,
-        (animation_properties.sprite_count.div_ceil(DEFAULT_COLUMN_COUNT) *
-            sprite_height *
-            scale_factor.0) /
-            scale_factor.1,
+        (animation_properties
+            .sprite_count
+            .div_ceil(DEFAULT_COLUMN_COUNT)
+            * sprite_height
+            * scale_factor.0)
+            / scale_factor.1,
     );
-    image.resize(target_width, target_height, image::imageops::FilterType::CatmullRom)
+    image.resize(
+        target_width,
+        target_height,
+        image::imageops::FilterType::CatmullRom,
+    )
 }
 
 pub fn calculate_pix_from_parent(
     parent_pix: (u32, u32),
-    value: (SizeUnit, SizeUnit)
+    value: (SizeUnit, SizeUnit),
 ) -> (u32, u32) {
-    let calc: fn(u32, SizeUnit) -> u32 = |parent, unit| {
-        match unit {
-            SizeUnit::Pixel(value) => value,
-            SizeUnit::Percentage(percentage) => (percentage * parent) / 100,
-        }
+    let calc: fn(u32, SizeUnit) -> u32 = |parent, unit| match unit {
+        SizeUnit::Pixel(value) => value,
+        SizeUnit::Percentage(percentage) => (percentage * parent) / 100,
     };
     (calc(parent_pix.0, value.0), calc(parent_pix.1, value.1))
 }
@@ -95,12 +100,15 @@ pub fn img_get_bytes_global(image: &DynamicImage) -> Result<Vec<u8>, SpriteError
         PixelFormat::RGB24 => {
             image
                 .as_rgb8() // (a: &ImageBuffer<RB....>) => { return Ok(a.as_bytes());}
-                .map_or(Err(SpriteError::PixelLoadError), |a| { Ok(a.as_bytes().to_vec()) })
+                .map_or(Err(SpriteError::PixelLoadError), |a| {
+                    Ok(a.as_bytes().to_vec())
+                })
         }
-        _ =>
-            image
-                .as_rgba8()
-                .map_or(Err(SpriteError::PixelLoadError), |a| { Ok(a.as_bytes().to_vec()) }),
+        _ => image
+            .as_rgba8()
+            .map_or(Err(SpriteError::PixelLoadError), |a| {
+                Ok(a.as_bytes().to_vec())
+            }),
     }
 }
 
@@ -108,12 +116,8 @@ pub fn get_writer<T: Fn(&mut (u8, u8, u8, u8))>(a: T) -> impl Fn(&mut [u8], usiz
     move |buffer: &mut [u8], b: usize| {
         let mut i = 0;
         while i + 3 < buffer.len() {
-            let mut color_components: (u8, u8, u8, u8) = (
-                buffer[i],
-                buffer[i + 1],
-                buffer[i + 2],
-                buffer[i + 3],
-            );
+            let mut color_components: (u8, u8, u8, u8) =
+                (buffer[i], buffer[i + 1], buffer[i + 2], buffer[i + 3]);
             a(&mut color_components);
             (buffer[i], buffer[i + 1], buffer[i + 2], buffer[i + 3]) = color_components;
             i += 3;
@@ -128,4 +132,40 @@ pub fn get_cursor_position(event_pump: &EventPump) -> (f32, f32) {
         SDL_GetGlobalMouseState(x_ptr, y_ptr);
         (x, y)
     }
+}
+
+pub fn get_move_direction(cursor_position: Point, gremlin_rect: Rect) -> (DirectionX, DirectionY) {
+    if gremlin_rect.contains_point(cursor_position) {
+        return (DirectionX::None, DirectionY::None);
+    }
+
+    let dir_x = if cursor_position.x > gremlin_rect.right() {
+        DirectionX::Right
+    } else if cursor_position.x < gremlin_rect.left() {
+        DirectionX::Left
+    } else {
+        DirectionX::None
+    };
+
+    let dir_y = if cursor_position.y < gremlin_rect.top() {
+        DirectionY::Up
+    } else if cursor_position.y > gremlin_rect.bottom() {
+        DirectionY::Down
+    } else {
+        DirectionY::None
+    };
+    (dir_x, dir_y)
+}
+
+#[derive(Clone, Copy, Debug, Hash)]
+pub enum DirectionX {
+    None,
+    Left,
+    Right,
+}
+#[derive(Clone, Copy, Debug, Hash)]
+pub enum DirectionY {
+    None,
+    Up,
+    Down,
 }

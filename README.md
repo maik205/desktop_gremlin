@@ -14,7 +14,7 @@ Written in Rust for lower footprint and uses SDL3 for cross-platform convenience
 - [x] Load and play gremlin sprite sheets
 - [x] Parse files from `Desktop_Gremlin`
 - [ ] Restructure project and seperate into different modules (WIP)
-- [ ] Handle click events and cursor events (WIP)
+- [x] Handle click events and cursor events (WIP)
 - [ ] OSD for configuration, resizing and a drag handle to drag gremlins around
 - [ ] Implement locating cursor position in macOS and Hyperland
 - [ ] Finish a simple UI tree implementation and seperate into another crate

@@ -1,7 +1,7 @@
 use image::DynamicImage;
 
 use crate::{
-    sprite::{GLOBAL_PIXEL_FORMAT, into_opt_rect},
+    gremlin::{GLOBAL_PIXEL_FORMAT, into_opt_rect},
     ui::{Composable, Notify, Render},
     utils::{get_writer, img_get_bytes_global},
 };
