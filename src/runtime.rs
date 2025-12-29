@@ -1,9 +1,9 @@
-use std::thread;
+use std::{sync::mpsc, thread, time::Duration};
 
 use crate::{
     behavior::{Behavior, ContextData},
     events::EventMediator,
-    gremlin::DesktopGremlin,
+    gremlin::{DesktopGremlin, GLOBAL_FRAMERATE},
 };
 
 #[derive(Default)]
@@ -21,6 +21,15 @@ impl DGRuntime {
     }
 
     pub fn go(&mut self) {
+        let (heartbeat_tx, heartbeat_rx) = mpsc::channel::<()>();
+
+        let heartbeat = thread::spawn(move || {
+            while let Ok(_) = heartbeat_tx.send(()) {
+                thread::sleep(Duration::from_secs_f64(1.0 / (GLOBAL_FRAMERATE as f64)));
+            }
+            println!("Heartbeat stopped");
+        });
+
         if let Ok(mut application) = DesktopGremlin::new(None) {
             application.current_gremlin = application
             .load_gremlin(
@@ -35,13 +44,13 @@ impl DGRuntime {
                 behavior.setup(&mut application);
             }
 
-            loop {
-                let events = event_mediator.pump_events(&mut event_pump);
+            while let Ok(_) = heartbeat_rx.recv() {
+                let events: std::collections::HashMap<crate::events::Event, Option<crate::events::EventData>> = event_mediator.pump_events(&mut event_pump);
                 let context = ContextData { events: events };
                 for behavior in self.behaviors.iter_mut() {
                     behavior.update(&mut application, &context);
                 }
-                
+
                 if let Ok(should_exit_lock) = application.should_exit.lock()
                     && *should_exit_lock == true
                 {
@@ -49,5 +58,7 @@ impl DGRuntime {
                 }
             }
         }
+        drop(heartbeat_rx);
+        let _ = heartbeat.join();
     }
 }

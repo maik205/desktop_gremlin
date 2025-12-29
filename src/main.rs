@@ -18,8 +18,8 @@ fn main() {
     let mut rt = DGRuntime::default();
 
     let behaviors: Vec<Box<dyn Behavior>> = vec![
-        GremlinDrag::new(),
         CommonBehavior::new(),
+        GremlinDrag::new(),
         GremlinMovement::new(),
         GremlinRender::new(),
         GremlinClick::new(),
