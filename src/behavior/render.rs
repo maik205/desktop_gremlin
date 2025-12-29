@@ -7,8 +7,8 @@ use sdl3::render::Texture;
 
 use crate::{
     behavior::Behavior,
-    gremlin::{Animation, AnimationProperties, GremlinTask},
-    utils::{TextureCache, resize_image_to_window},
+    gremlin::{Animation, AnimationProperties, Animator, DEFAULT_COLUMN_COUNT, GremlinTask},
+    utils::{TextureCache, sdl_resize},
 };
 
 #[derive(Default)]
@@ -66,7 +66,6 @@ impl Behavior for GremlinRender {
                                 .lookup(animation_name.clone())
                                 .map(|a| a.0)
                         };
-
                         if let Some(index) = cache_lookup {
                             self.texture_cache.lock().unwrap().rearrange(index);
                             // unwrap safety: the mutex is guaranteed to not be poisoned and released after the rearrange cache function goes out of scope
@@ -76,30 +75,42 @@ impl Behavior for GremlinRender {
                             let _ = gremlin.animator.insert(animator.clone());
                             let _ = self.gremlin_texture.insert(texture.clone());
                             let _ = cache_hit_index.insert(index);
-                        } else if let Ok(mut animation) =
+                        } else if let Ok(animation) =
                             <&AnimationProperties as TryInto<Animation>>::try_into(animation_props)
                         {
-                            if animation.properties.sprite_count > 110 {
-                                animation.sprite_sheet.image = resize_image_to_window(
-                                    animation.sprite_sheet.image,
-                                    application.canvas.window(),
-                                    animation_props.clone(),
+                            let mut animator: Animator = (&animation).into();
+
+                            let texture_rc = Rc::new({
+                                let scale_factor = (1, 1);
+                                let (sprite_width, sprite_height) =
+                                    application.canvas.window().size();
+                                let (target_width, target_height) = (
+                                    (DEFAULT_COLUMN_COUNT * sprite_width * scale_factor.0)
+                                        / scale_factor.1,
+                                    (animation
+                                        .properties
+                                        .sprite_count
+                                        .div_ceil(DEFAULT_COLUMN_COUNT)
+                                        * sprite_height
+                                        * scale_factor.0)
+                                        / scale_factor.1,
                                 );
-                            }
+                                animator.sprite_size = (sprite_width, sprite_height);
+                                animator.texture_size = (target_width, target_height);
 
-                            let texture_rc = Rc::new(
-                                animation
-                                    .sprite_sheet
-                                    .into_texture(&application.texture_creator)
-                                    .unwrap(),
-                            );
+                                sdl_resize(
+                                    &animation.sprite_sheet.image,
+                                    animator.texture_size,
+                                    &mut application.canvas,
+                                )
+                                .unwrap()
+                            });
 
-                            self.gremlin_texture.insert(texture_rc.clone());
-
-                            let animator = Some((&animation).into());
+                            let _ = self.gremlin_texture.insert(texture_rc.clone());
                             drop(animation);
 
-                            gremlin.animator = animator;
+                            gremlin.animator = Some(animator);
+
                             if let Some(ref animator) = gremlin.animator {
                                 self.texture_cache.lock().unwrap().cache(
                                     animator.animation_properties.animation_name.clone(),

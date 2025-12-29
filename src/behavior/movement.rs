@@ -9,7 +9,7 @@ use crate::{
     utils::{DirectionX, DirectionY, get_cursor_position, get_move_direction, win_to_rect},
 };
 
-const DEFAULT_VELOCITY: f32 = 250.0;
+const DEFAULT_VELOCITY: f32 = 300.0;
 
 pub struct GremlinMovement {
     velocity: f32,
@@ -18,6 +18,7 @@ pub struct GremlinMovement {
     current_position: (i32, i32),
     last_moved_at: Instant,
     should_check_position: bool,
+    is_window_inflated: bool,
 }
 
 impl Default for GremlinMovement {
@@ -29,6 +30,7 @@ impl Default for GremlinMovement {
             current_position: Default::default(),
             last_moved_at: Instant::now(),
             should_check_position: true,
+            is_window_inflated: false,
         }
     }
 }
@@ -41,6 +43,7 @@ impl super::Behavior for GremlinMovement {
         }) {
             if !self.is_active {
                 self.last_moved_at = Instant::now();
+                self.current_position = application.canvas.window().position();
             }
 
             self.is_active = !self.is_active;
@@ -50,7 +53,7 @@ impl super::Behavior for GremlinMovement {
         }) {
             self.is_dragging = true;
         }
-        if let Some(_) = context.events.get(&Event::DragEnd {
+        if let Some(Some(EventData::FCoordinate { x, y })) = context.events.get(&Event::DragEnd {
             mouse_btn: MouseButton::Left,
         }) {
             self.is_dragging = false;
@@ -72,10 +75,12 @@ impl super::Behavior for GremlinMovement {
             let move_target = Point::new(cursor_x as i32, cursor_y as i32);
             let (dir_x, dir_y) = get_move_direction(move_target, {
                 let mut win_rect = win_to_rect(application.canvas.window());
-                if win_rect.contains_point(move_target) {
+                if self.is_window_inflated {
                     win_rect.resize(win_rect.width() + 100, win_rect.height() + 100);
-                    println!("{:?}", win_rect);
+                    win_rect.offset(-50, -50);
                 }
+                self.is_window_inflated = win_rect.contains_point(move_target);
+
                 win_rect
             });
             let tan = ((gremlin_center.y - move_target.y) as f32)

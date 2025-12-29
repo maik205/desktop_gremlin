@@ -1,20 +1,15 @@
 use std::{
-    collections::{HashMap, HashSet, LinkedList, VecDeque},
+    collections::{HashMap, LinkedList, VecDeque},
     env,
-    ffi::c_void,
     fs::{self},
     io,
-    marker::PhantomData,
     path::{Path, PathBuf},
-    ptr::null_mut,
     rc::Rc,
     str::FromStr,
     sync::{
-        Arc, LazyLock, Mutex,
+        Arc, Mutex,
         mpsc::{self, Receiver, Sender},
     },
-    thread::{self, JoinHandle},
-    time::{Duration, Instant},
 };
 
 use anyhow::Result;
@@ -24,17 +19,13 @@ use image::{DynamicImage, EncodableLayout};
 use sdl3::{
     // might move to winit & wgpu but,... ehhhhhhhhh too lazy.... i love sdl
     Sdl,
-    event::Event as SdlEvent,
+    gpu::ShaderFormat,
     pixels::{Color, PixelFormat},
-    rect::{Point, Rect},
+    rect::Rect,
     render::{Canvas, FRect, Texture, TextureCreator},
     sys::{
         properties::SDL_GetPointerProperty,
-        rect::SDL_Point,
-        video::{
-            SDL_GetWindowProperties, SDL_HitTestResult, SDL_PROP_WINDOW_WIN32_HWND_POINTER,
-            SDL_SetWindowHitTest, SDL_Window,
-        },
+        video::{SDL_GetWindowProperties, SDL_PROP_WINDOW_WIN32_HWND_POINTER},
     },
     video::{Window, WindowBuilder, WindowContext, WindowFlags},
 };
@@ -51,14 +42,10 @@ use windows::Win32::{
 pub const GLOBAL_PIXEL_FORMAT: PixelFormat = PixelFormat::RGBA32;
 
 use crate::{
-    behavior::{self, Behavior},
-    events::Event,
+    behavior::Behavior,
     io::AsyncAnimationLoader,
-    ui::{Component, Render, div},
-    utils::{
-        DirectionX, DirectionY, TextureCache, get_cursor_position, get_move_direction,
-        get_png_list, resize_image_to_window, win_to_rect,
-    },
+    ui::Render,
+    utils::{DirectionX, DirectionY, TextureCache, get_png_list},
 };
 
 #[derive(Debug, Clone)]
@@ -197,8 +184,6 @@ pub struct Gremlin {
     pub animation_map: HashMap<String, AnimationProperties>,
     pub metadata: HashMap<String, String>,
     pub animator: Option<Animator>,
-    pub texture_cache: TextureCache,
-    pub texture: Option<Rc<Texture>>,
 }
 
 pub struct DesktopGremlin {
@@ -206,19 +191,12 @@ pub struct DesktopGremlin {
     pub current_gremlin: Option<Gremlin>,
     pub canvas: Canvas<Window>,
     pub should_exit: Arc<Mutex<bool>>,
-    pub display_context: DisplayContext,
-    pub async_loader: AsyncAnimationLoader,
     // pub texture_cache: Arc<Mutex<TextureCache<'a>>>,
     pub task_queue: VecDeque<GremlinTask>,
     pub task_channel: (Sender<GremlinTask>, Receiver<GremlinTask>),
-    pub behaviors: Vec<Box<dyn Behavior>>,
-    pub texture_creator: TextureCreator<WindowContext>,
     pub should_check_for_action: bool,
 }
 
-pub struct DisplayContext {
-    pub usable_bounds: Rect,
-}
 pub struct LaunchArguments {
     pub w: u32,
     pub h: u32,
@@ -229,10 +207,11 @@ pub struct LaunchArguments {
 pub const GLOBAL_FRAMERATE: u32 = 48;
 
 impl LaunchArguments {
-    pub fn parse_from_args(args: env::Args) {
+    pub fn _parse_from_args(args: env::Args) {
         let mut launch_args = LaunchArguments::default();
         let args = args.collect::<Vec<String>>();
-        for mut i in 0..args.len() {
+        let mut i = 0;
+        while i < args.len() {
             if args[i].starts_with('-') {
                 match args[i].as_str() {
                     "-w" => {
@@ -250,6 +229,7 @@ impl LaunchArguments {
                     _ => {}
                 }
             }
+            i += 1;
         }
     }
 }
@@ -316,22 +296,17 @@ impl DesktopGremlin {
         }
 
         let canvas = window.into_canvas();
-        let texture_creator = canvas.texture_creator();
 
         let usable_bounds = video.get_primary_display()?.get_usable_bounds()?;
 
         Ok(DesktopGremlin {
             sdl,
             current_gremlin: None,
-            texture_creator,
             canvas,
             should_exit: Arc::new(Mutex::new(false)),
-            display_context: DisplayContext { usable_bounds },
-            async_loader: Default::default(),
             // texture_cache: Default::default(),
             task_queue: Default::default(),
             task_channel: mpsc::channel(),
-            behaviors: Vec::new(),
             should_check_for_action: true,
         })
     }

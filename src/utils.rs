@@ -4,14 +4,17 @@ use std::{
     io,
     path::PathBuf,
     rc::Rc,
+    time::Instant,
 };
 
 use image::{DynamicImage, EncodableLayout};
 use sdl3::{
+    gpu::{BlitInfo, Device, TextureCreateInfo, TextureFormat, TextureType, TextureUsage},
     pixels::PixelFormat,
     rect::{Point, Rect},
-    render::Texture,
-    sys::mouse::SDL_GetGlobalMouseState,
+    render::{Canvas, ScaleMode, Texture},
+    surface::Surface,
+    sys::{mouse::SDL_GetGlobalMouseState, surface::SDL_ScaleMode},
     video::Window,
 };
 
@@ -65,27 +68,26 @@ pub fn get_png_list(
     Ok(())
 }
 
-pub fn resize_image_to_window(
-    image: DynamicImage,
-    window: &Window,
-    animation_properties: AnimationProperties,
-) -> DynamicImage {
-    let scale_factor = (1, 1);
-    let (sprite_width, sprite_height) = window.size();
-    let (target_width, target_height) = (
-        (DEFAULT_COLUMN_COUNT * sprite_width * scale_factor.0) / scale_factor.1,
-        (animation_properties
-            .sprite_count
-            .div_ceil(DEFAULT_COLUMN_COUNT)
-            * sprite_height
-            * scale_factor.0)
-            / scale_factor.1,
-    );
-    image.resize(
-        target_width,
-        target_height,
-        image::imageops::FilterType::Triangle,
-    )
+pub fn sdl_resize(
+    image: &DynamicImage,
+    target: (u32, u32),
+    canvas: &'_ mut Canvas<Window>,
+) -> anyhow::Result<Texture> {
+    let mut binding = img_get_bytes_global(&image).unwrap();
+
+    let original = Surface::from_data(
+        &mut binding,
+        image.width(),
+        image.height(),
+        GLOBAL_PIXEL_FORMAT.bytes_per_pixel() as u32 * image.width(),
+        GLOBAL_PIXEL_FORMAT,
+    )?;
+
+    let mut res = Surface::new(target.0, target.1, GLOBAL_PIXEL_FORMAT)?;
+
+    original.blit_scaled(None, &mut res, None, SDL_ScaleMode::LINEAR)?;
+    let res = canvas.create_texture_from_surface(res)?;
+    Ok(res)
 }
 
 pub fn calculate_pix_from_parent(
