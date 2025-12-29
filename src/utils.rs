@@ -8,7 +8,6 @@ use std::{
 
 use image::{DynamicImage, EncodableLayout};
 use sdl3::{
-    EventPump,
     pixels::PixelFormat,
     rect::{Point, Rect},
     render::Texture,
@@ -123,8 +122,8 @@ pub fn img_get_bytes_global(image: &DynamicImage) -> Result<Vec<u8>, SpriteError
     }
 }
 
-pub fn get_writer<T: Fn(&mut (u8, u8, u8, u8))>(a: T) -> impl Fn(&mut [u8], usize) {
-    move |buffer: &mut [u8], b: usize| {
+pub fn _get_writer<T: Fn(&mut (u8, u8, u8, u8))>(a: T) -> impl Fn(&mut [u8], usize) {
+    move |buffer: &mut [u8], _: usize| {
         let mut i = 0;
         while i + 3 < buffer.len() {
             let mut color_components: (u8, u8, u8, u8) =
@@ -229,7 +228,7 @@ impl TextureCache {
         }
     }
 
-    pub fn print(&self) {
+    pub fn _print(&self) {
         let mut res = String::new();
         for (name, _) in &self.data {
             res += &(name.to_owned() + " ");

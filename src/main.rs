@@ -13,7 +13,6 @@ mod io;
 mod runtime;
 mod ui;
 mod utils;
-
 fn main() {
     let mut rt = DGRuntime::default();
 
