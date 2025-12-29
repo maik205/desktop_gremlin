@@ -1,9 +1,9 @@
 use image::DynamicImage;
 
 use crate::{
-    sprite::{GLOBAL_PIXEL_FORMAT, into_opt_rect},
+    gremlin::{GLOBAL_PIXEL_FORMAT, into_opt_rect},
     ui::{Composable, Notify, Render},
-    utils::{get_writer, img_get_bytes_global},
+    utils::img_get_bytes_global,
 };
 
 pub struct Image {
@@ -51,9 +51,7 @@ impl Render for Image {
         texture.update(
             None,
             image_bytes,
-            // GLOBAL_PIXEL_FORMAT.byte_size_from_pitch_and_height(
-            (self.data.width() as usize) * GLOBAL_PIXEL_FORMAT.bytes_per_pixel(), // self.data.height() as usize
-                                                                                  // )
+            (self.data.width() as usize) * GLOBAL_PIXEL_FORMAT.bytes_per_pixel(),
         )?;
 
         canvas.copy(&texture, None, rect)?;

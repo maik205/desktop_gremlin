@@ -10,7 +10,7 @@ use sdl3::{
 pub mod widgets;
 
 use crate::{
-    sprite::{SizeUnit, into_frect, into_opt_rect, into_rect},
+    gremlin::{SizeUnit, into_frect, into_opt_rect, into_rect},
     utils::calculate_pix_from_parent,
 };
 

@@ -1,12 +1,24 @@
-use crate::sprite::DesktopGremlin;
-use anyhow::Result;
+use crate::{behavior::*, runtime::DGRuntime};
 
-pub mod sprite;
-pub mod ui;
-pub mod utils;
+mod behavior;
+mod events;
+mod gremlin;
+mod io;
+mod runtime;
+mod ui;
+mod utils;
 
-fn main() -> Result<()> {
-    let app = DesktopGremlin::new(None)?;
-    app.go();
-    Ok(())
+fn main() {
+    let mut rt = DGRuntime::default();
+
+    let behaviors: Vec<Box<dyn Behavior>> = vec![
+        CommonBehavior::new(),
+        GremlinDrag::new(),
+        GremlinMovement::new(),
+        GremlinRender::new(),
+        GremlinClick::new(),
+    ];
+
+    rt.register_behaviors(behaviors);
+    rt.go();
 }
