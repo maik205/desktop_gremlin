@@ -7,7 +7,10 @@ use std::{
     time::Duration,
 };
 
-use crate::gremlin::{Animation, AnimationProperties};
+use crate::{
+    gremlin::{Animation, AnimationProperties},
+    threads::ThreadPool, utils::TextureCacheItem,
+};
 
 pub enum LoaderTask {
     Load(AnimationProperties),
@@ -102,5 +105,23 @@ impl Drop for AsyncAnimationLoader {
         if let Some(handle) = self.thread_handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+pub struct AsyncBlitCache {
+    #[allow(unused)]
+    thread_pool: ThreadPool,
+}
+impl Default for AsyncBlitCache {
+    fn default() -> Self {
+        Self {
+            thread_pool: ThreadPool::new(5),
+        }
+    }
+}
+
+impl AsyncBlitCache {
+    pub fn cache(&self, _: TextureCacheItem) {
+        
     }
 }

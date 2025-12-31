@@ -5,6 +5,12 @@ pub struct CommonBehavior {}
 
 impl Behavior for CommonBehavior {
     fn setup(&mut self, application: &mut crate::gremlin::DesktopGremlin) {
+        application.current_gremlin = application
+            .load_gremlin(
+                r"C:\Users\ASUS\Documents\Projects\desktop_gremlin\assets\Gremlins\Mambo\config.txt".to_string()
+            )
+            .ok();
+
         let _ = application
             .task_channel
             .0

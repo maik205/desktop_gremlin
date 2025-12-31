@@ -229,8 +229,8 @@ impl LaunchArguments {
 impl Default for LaunchArguments {
     fn default() -> Self {
         Self {
-            w: 200,
-            h: 200,
+            w: 150,
+            h: 150,
             title: String::from("Desktop Gremlin!"),
             window_flags: vec![
                 WindowFlags::TRANSPARENT,

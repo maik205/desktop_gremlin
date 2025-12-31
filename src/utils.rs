@@ -250,8 +250,8 @@ pub fn win_to_rect(window: &Window) -> Rect {
 pub struct TextureCache {
     pub data: VecDeque<(String, TextureCacheItem)>,
 }
-// /
-type TextureCacheItem = (Animator, Rc<Texture>);
+
+pub type TextureCacheItem = (Animator, Rc<Texture>);
 
 impl TextureCache {
     // rearrange to purge cache later with a LRU policy
@@ -277,7 +277,13 @@ impl TextureCache {
     pub fn cache(&mut self, name: String, texture: TextureCacheItem) {
         match &self.data.len() {
             CACHE_CAPACITY.. => {
-                self.data.pop_front();
+                if let Some(val) = self.data.pop_front() {
+                    let tex = val.1.1;
+                    if let Some(tex) = Rc::into_inner(tex) {
+                        unsafe { tex.destroy() };
+                        println!("destroyed tex {}", val.0);
+                    }
+                }
             }
             _ => {}
         };

@@ -69,7 +69,8 @@ impl Behavior for GremlinRender {
                         if let Some(index) = cache_lookup {
                             self.texture_cache.lock().unwrap().rearrange(index);
                             // unwrap safety: the mutex is guaranteed to not be poisoned and released after the rearrange cache function goes out of scope
-                            let lock = &self.texture_cache.lock().unwrap();
+                            let lock: &std::sync::MutexGuard<'_, TextureCache> =
+                                &self.texture_cache.lock().unwrap();
                             // unwrap safety: the back element is guaranteed to exist because the index before rearranging exists.
                             let (animator, texture) = &lock.data.back().unwrap().1;
                             let _ = gremlin.animator.insert(animator.clone());

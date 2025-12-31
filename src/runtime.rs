@@ -30,13 +30,8 @@ impl DGRuntime {
             println!("Heartbeat stopped, someone get the zapper!");
         });
 
-        if let Ok(mut application) = DesktopGremlin::new(None) {
-            application.current_gremlin = application
-            .load_gremlin(
-                r"C:\Users\ASUS\Documents\Projects\desktop_gremlin\assets\Gremlins\Mambo\config.txt".to_string()
-            )
-            .ok();
-
+        if let Ok(mut application) = DesktopGremlin::new(
+            None) {
             let mut event_pump = application.sdl.event_pump().unwrap();
             let mut event_mediator = EventMediator::default();
 
@@ -62,4 +57,3 @@ impl DGRuntime {
         let _ = heartbeat.join();
     }
 }
-    

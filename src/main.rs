@@ -3,10 +3,11 @@ use crate::{behavior::*, runtime::DGRuntime};
 mod behavior;
 mod events;
 mod gremlin;
-mod io;
+pub mod io;
 mod runtime;
 pub mod ui;
 mod utils;
+mod threads;
 
 fn main() {
     let mut rt = DGRuntime::default();
